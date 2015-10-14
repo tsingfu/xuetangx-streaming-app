@@ -24,12 +24,20 @@ class EnhanceTimeProcessor extends StreamingProcessor {
                        confMap: Map[String, String],
                        cacheConfMap: Map[String, String] = null,
                        dataSourceConfMap: Map[String, String] = null): RDD[String] = {
+
+    val timeKey = confMap("timeKeyName")
+    val timeKeyAdd = confMap("add.timeKeyName.list")
+    val timeIntervalMinutesList = confMap("add.timeKeyInterval.minutes.list")
+
+    val timeKeyIntervalList = timeKey.split(",").map(_.trim).zip(timeIntervalMinutesList.split(",").map(_.trim.toInt))
+
     rdd.map(jsonStr=>{
+      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr)
       // json4s 解析json字符串
       val jValue = parse(jsonStr)
 
       //获取时间字段取值
-      val time_old = compact(jValue \ "time") //发现字符串含有引号
+      val time_old = compact(jValue \ timeKey) //发现字符串含有引号
       //        println("= = " * 10 +"E[DEBUG] time_old.length = " + time_old.length +", is startWith(引号)) "+ time_old.startsWith("\"") +", time_old=" + time_old)
 
       val cstTimeStr = get_cst_time(time_old)
@@ -37,17 +45,25 @@ class EnhanceTimeProcessor extends StreamingProcessor {
       // 使用指定格式更新时间字段取值，要求：
       // 1统一日志为北京时区时间，如果时间格式不对，置"";
       var jValue_new = jValue transformField {
-        case JField("time", _) => ("time", JString(cstTimeStr))
+        case JField(`timeKey`, _) => (timeKey, JString(cstTimeStr))
       }
 
       // 2新增统计指标时间粒度
-      val time_min_1 = get_timeKey(cstTimeStr, 1)
-      val jsonStr_adding =  "{\"time_min_1\":\"" + time_min_1 +"\"}"
-      jValue_new = jValue_new.merge(parse(jsonStr_adding))
-      // println("jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
-
+      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeKeyIntervalList.mkString("[", ",", "]")
+              +", timeKey = " + timeKey +", timeKeyAdd " + timeKeyAdd +", timeIntervalMinutesList = " + timeIntervalMinutesList)
+      timeKeyIntervalList.foreach{case (timeKeyName, timekeyInterval) =>
+        val addedTimeValue = get_timeKey(cstTimeStr, timekeyInterval)
+        val jsonStr_adding =  "{\"" + timeKeyAdd +"\":\"" + addedTimeValue +"\"}"
+        jValue_new = jValue_new.merge(parse(jsonStr_adding))
+        println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
+      }
       compact(jValue_new)
+    }).filter(jsonStr => {
+      // json4s 解析json字符串
+      val jValue = parse(jsonStr)
+      compact(jValue \ timeKey).nonEmpty
     })
+
   }
 
 
@@ -120,7 +136,7 @@ class EnhanceTimeProcessor extends StreamingProcessor {
   val DEFAULT_datetimePattern = "yyyy-MM-dd HH:mm:ss"
   val DEFAULT_sdf_cst = new SimpleDateFormat(DEFAULT_datetimePattern)
   DEFAULT_sdf_cst.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
-  val DEFAULT_sdf_cst2 = new SimpleDateFormat("yyyyMMdd:HH")
+  val DEFAULT_sdf_cst2 = new SimpleDateFormat("yyyyMMddHH")
   DEFAULT_sdf_cst2.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
 
   /**
@@ -140,8 +156,8 @@ class EnhanceTimeProcessor extends StreamingProcessor {
 //      timeStr.substring(0, 10) +":"+ timeStr.substring(11, 14) +
 //              (if (start < 10) "0" else "") + start + "-" +
 //              (if (end < 10) "0" else "") + end
-      DEFAULT_sdf_cst2.format(date) +":" +
-              (if (start < 10) "0" else "") + start + "-" +
+      DEFAULT_sdf_cst2.format(date) +
+              (if (start < 10) "0" else "") + start +
               (if (end < 10) "0" else "") + end
     }
   }

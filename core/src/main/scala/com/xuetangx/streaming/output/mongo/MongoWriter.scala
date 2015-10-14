@@ -13,7 +13,9 @@ class MongoWriter extends StreamingProcessor {
     * @param rdd
     * @param confMap
     */
-  override def output(rdd: RDD[String], confMap: Map[String, String]) = {
+  override def output(rdd: RDD[String],
+                      confMap: Map[String, String]) = {
+
 
   }
 

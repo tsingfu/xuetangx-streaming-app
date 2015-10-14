@@ -1,121 +1,92 @@
 package com.xuetangx.streaming
 
-import java.util.concurrent.ConcurrentHashMap
-
 import com.xuetangx.streaming.util.Utils
 
-import scala.collection.JavaConverters._
+import scala.xml.XML
 
 /**
- * Created by tsingfu on 15/10/6.
+ * Created by tsingfu on 15/10/14.
  */
-class AppConf(loadDefaults: Boolean) extends Cloneable with Logging with Serializable{
+class AppConf extends Serializable {
 
-  def this() = this(true)
+  var appsPropMap: Map[String, Map[String, String]] = _
+  var interfaceId: String = _
+//  var dataSourcesPropMap: Map[String, Map[String, String]] = _
+  var inputInterfacePropMap: Map[String, String] = _
+  var outputInterfacesPropMap: Map[String, Map[String, String]] = _
+  var cachesPropMap: Map[String, Map[String, String]] = _
+  var preparesActivePropSeq: Seq[(String, Map[String, String])] = _
+  var computesActiveConfTupleSeq: Seq[(String, Seq[(String, Map[String, String])])] = _
 
-  private val settings = new ConcurrentHashMap[String, String]()
+  def init(confFileXml: String, appId: String): Unit ={
+    // 解析配置
+    val conf = XML.load(confFileXml)
+    /*
+        val (appsCommonPropMap, appsPropMap) = parseProperties2Map(conf\ "apps", "app", "id")
+        val (dataSourcesCommonPropMap, dataSourcesPropMap) = parseProperties2Map(conf \ "dataSources", "source", "id")
+        val (dataInterfaceCommonPropMap, dataInterfacesPropMap) = parseProperties2Map(conf \ "dataInterfaces", "interface", "id")
+        val (cacheCommonPropMap, cachesPropMap) = parseProperties2Map(conf\ "externalCaches", "cache", "id")
+    */
 
-  if (loadDefaults) {
-    // Load any spark.* system properties
-//    for ((key, value) <- Utils.getSystemProperties if key.startsWith("spark.")) {
-    for ((key, value) <- Utils.getSystemProperties if key.startsWith("streaming.")) {
-      set(key, value)
+    //    val monitor = Class.forName("com.xuetangx.streaming.monitor.MConsolePrinter").newInstance()
+
+    // 应用的配置
+    appsPropMap = Utils.parseProperties2Map(conf\ "apps", "app", "app.id")
+    interfaceId = appsPropMap(appId)("app.interfaceId") //获取输入接口id
+
+    // 数据源的配置
+    val dataSourcesPropMap = Utils.parseProperties2Map(conf \ "dataSources", "source", "source.id")
+
+    //TODO: 更新
+    // 数据接口的配置，分2类： input, output
+    val dataInterfacesPropMap = Utils.parseProperties2Map(conf \ "dataInterfaces", "interface", "interface.id")
+    // 输出接口的配置
+    val outputDataInterfacesPropMap = dataInterfacesPropMap.filter{case (id, mapConf) => mapConf("interface.type") == "output"}
+    outputInterfacesPropMap = outputDataInterfacesPropMap.map{case (id, mapConf) =>
+      (id, mapConf ++ dataSourcesPropMap(dataInterfacesPropMap(id)("interface.sourceId")))
     }
-  }
 
+    // 外部缓存的配置
+    cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id")
 
-  /** Set a configuration variable. */
-  def set(key: String, value: String): AppConf = {
-    if (key == null) {
-      throw new NullPointerException("null key")
+    // 指定的输入接口配置（含数据源信息）
+    inputInterfacePropMap = dataInterfacesPropMap(interfaceId) ++
+            dataSourcesPropMap(dataInterfacesPropMap(interfaceId)("interface.sourceId"))
+
+    // 准备阶段配置
+    val preparesConf = (conf \ "prepares").filter(_.attribute("interfaceId").get.text==interfaceId)
+    //    val (preparesCommonPropMap, preparesPropMap) = parseProperties2Map(preparesConf, "prepare", "id") //报错
+    val preparesPropMap = Utils.parseProperties2Map(preparesConf, "step", "step.id")
+
+    // 指定的计算阶段配置
+    val computeStatisticsConf = (conf \ "computeStatistics").filter(node=>{
+      //      node.attribute("interfaceId")==interfaceId
+      node.attribute("interfaceId").get.text==interfaceId
+    })
+
+    // 指定数据接口id计算统计指标的计算配置(计算统计指标的数据集id->是否启用->指定id的配置)
+    val computesConfTuple = for (computeStatisticConf <- computeStatisticsConf \ "computeStatistic") yield {
+      val outerAttrMap = computeStatisticConf.attributes.asAttrMap
+      //      (outerAttrMap, parseProperties2Map(computeStatisticConf, "step", "step.id"))
+      val res = Utils.parseProperties2Map(computeStatisticConf, "step", "step.id").map{case (k, vMap)=>
+        (k, vMap ++ outerAttrMap.map{case (outKey, v) => (computeStatisticConf.head.label+"."+outKey, v)})
+      }
+      println("=  = " * 20)
+      println(outerAttrMap.mkString("[", ",", "]"))
+      (outerAttrMap("id"), outerAttrMap("enabled"), res)
     }
-    if (value == null) {
-      throw new NullPointerException("null value for " + key)
-    }
-    settings.put(key, value)
-    this
+
+    // 准备阶段配置中有效步骤的配置
+    preparesActivePropSeq = preparesPropMap.filter{case (k, v)=>
+      v.getOrElse("prepare.enabled", "false") == "true"
+    }.toSeq.sortWith(_._1 < _._1)
+
+    // 指定数据接口id有效的计算配置
+    computesActiveConfTupleSeq = computesConfTuple.filter(_._2=="true").map(kxv=>{
+      val (key, flag, outerMap) = kxv
+
+      val filteredStepsMap = outerMap.filter{case (k, vMap)=>vMap.getOrElse("step.enabled", "false")=="true"}
+      (key, filteredStepsMap.toSeq.sortWith(_._1 < _._1))
+    }).sortWith(_._1 < _._1)
   }
-
-  /** Set multiple parameters together */
-  def setAll(settings: Traversable[(String, String)]): AppConf = {
-    settings.foreach { case (k, v) => set(k, v) }
-    this
-  }
-
-  /** Set a parameter if it isn't already configured */
-  def setIfMissing(key: String, value: String): AppConf = {
-    if (settings.putIfAbsent(key, value) == null) {
-//      logDeprecationWarning(key)
-    }
-    this
-  }
-
-  /** Remove a parameter from the configuration */
-  def remove(key: String): AppConf = {
-    settings.remove(key)
-    this
-  }
-
-  /** Get a parameter; throws a NoSuchElementException if it's not set */
-  def get(key: String): String = {
-    getOption(key).getOrElse(throw new NoSuchElementException(key))
-  }
-
-  /** Get a parameter, falling back to a default if not set */
-  def get(key: String, defaultValue: String): String = {
-    getOption(key).getOrElse(defaultValue)
-  }
-
-  /** Get a parameter as an Option */
-  def getOption(key: String): Option[String] = {
-    Option(settings.get(key))
-  }
-
-  /** Get all parameters as a list of pairs */
-  def getAll: Array[(String, String)] = {
-    settings.entrySet().asScala.map(x => (x.getKey, x.getValue)).toArray
-  }
-
-  /** Get a parameter as an integer, falling back to a default if not set */
-  def getInt(key: String, defaultValue: Int): Int = {
-    getOption(key).map(_.toInt).getOrElse(defaultValue)
-  }
-
-  /** Get a parameter as a long, falling back to a default if not set */
-  def getLong(key: String, defaultValue: Long): Long = {
-    getOption(key).map(_.toLong).getOrElse(defaultValue)
-  }
-
-  /** Get a parameter as a double, falling back to a default if not set */
-  def getDouble(key: String, defaultValue: Double): Double = {
-    getOption(key).map(_.toDouble).getOrElse(defaultValue)
-  }
-
-  /** Get a parameter as a boolean, falling back to a default if not set */
-  def getBoolean(key: String, defaultValue: Boolean): Boolean = {
-    getOption(key).map(_.toBoolean).getOrElse(defaultValue)
-  }
-
-  /** Does the configuration contain a given parameter? */
-  def contains(key: String): Boolean = settings.containsKey(key)
-
-  /** Copy this object */
-  override def clone: AppConf = {
-    new AppConf(false).setAll(getAll)
-  }
-
-  /**
-   * By using this instead of System.getenv(), environment variables can be mocked
-   * in unit tests.
-   */
-  private def getenv(name: String): String = System.getenv(name)
-
-  /**
-   * Return a string listing all keys and values, one per line. This is useful to print the
-   * configuration out for debugging.
-   */
-  def toDebugString: String = {
-    getAll.sorted.map{case (k, v) => k + "=" + v}.mkString("\n")
-  }
-
 }

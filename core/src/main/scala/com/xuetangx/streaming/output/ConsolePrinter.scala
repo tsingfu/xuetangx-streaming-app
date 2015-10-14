@@ -12,8 +12,14 @@ class ConsolePrinter extends StreamingProcessor {
     *
     * @param rdd
     * @param confMap
+    *
     */
-  override def output(rdd: RDD[String], confMap: Map[String, String]) = {
+  override def output(rdd: RDD[String],
+                      confMap: Map[String, String]) = {
+
+    rdd.foreachPartition(iter=>{
+      iter.foreach(line=>println("- - " * 10 + "[myapp ConsolePrinter.output]" + line))
+    })
 
   }
 

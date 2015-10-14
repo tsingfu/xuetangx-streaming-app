@@ -2,10 +2,10 @@ package com.xuetangx.streaming
 
 import org.apache.spark.rdd.RDD
 
-/**
+/** 插件类的 base Class
  * Created by tsingfu on 15/10/8.
  */
-class StreamingProcessor {
+class StreamingProcessor extends Serializable {
 
   /**处理过滤和属性增强(取值更新，增减字段等)
    *
@@ -20,7 +20,7 @@ class StreamingProcessor {
     rdd
   }
 
-  /**计算统计指标
+  /**计算统计指标，使用插件类实现计算统计指标时，需要重写自定义
    *
    * @param rdd
    * @param confMap
@@ -36,7 +36,8 @@ class StreamingProcessor {
    * @param rdd
    * @param confMap
    */
-  def output(rdd: RDD[String], confMap: Map[String, String]) = {
+  def output(rdd: RDD[String],
+             confMap: Map[String, String]) = {
 
   }
 
