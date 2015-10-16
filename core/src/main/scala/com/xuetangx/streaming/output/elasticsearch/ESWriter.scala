@@ -17,7 +17,9 @@ class ESWriter extends StreamingProcessor {
 
   /**输出统计指标到elasticsearch
     *
-    * @param rdd 含有统计信息指标的rdd，格式：time_key, other_keysList, value, other_info(doc_type)
+    * @param rdd 含有统计信息指标的rdd，
+    *            格式：统计指标的维度(targetKeys) 统计指标的时间维度(time_key，如每分钟 time_minute_1 ), 统计指标取值value,
+    *             需要附加的其他信息：
     * @param confMap 输出接口的配置信息
     */
   override def output(rdd: RDD[String],

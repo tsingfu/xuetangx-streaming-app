@@ -18,6 +18,8 @@ class AppConf extends Serializable {
   var preparesActivePropSeq: Seq[(String, Map[String, String])] = _
   var computesActiveConfTupleSeq: Seq[(String, Seq[(String, Map[String, String])])] = _
 
+
+
   def init(confFileXml: String, appId: String): Unit ={
     // 解析配置
     val conf = XML.load(confFileXml)
@@ -37,7 +39,6 @@ class AppConf extends Serializable {
     // 数据源的配置
     val dataSourcesPropMap = Utils.parseProperties2Map(conf \ "dataSources", "source", "source.id")
 
-    //TODO: 更新
     // 数据接口的配置，分2类： input, output
     val dataInterfacesPropMap = Utils.parseProperties2Map(conf \ "dataInterfaces", "interface", "interface.id")
     // 输出接口的配置
@@ -47,7 +48,10 @@ class AppConf extends Serializable {
     }
 
     // 外部缓存的配置
-    cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id")
+    //    val cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id")
+    cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id").map{case (cacheId, confMap)=>
+      (cacheId, confMap ++ dataSourcesPropMap(confMap("cache.sourceId")))
+    }
 
     // 指定的输入接口配置（含数据源信息）
     inputInterfacePropMap = dataInterfacesPropMap(interfaceId) ++
@@ -88,5 +92,6 @@ class AppConf extends Serializable {
       val filteredStepsMap = outerMap.filter{case (k, vMap)=>vMap.getOrElse("step.enabled", "false")=="true"}
       (key, filteredStepsMap.toSeq.sortWith(_._1 < _._1))
     }).sortWith(_._1 < _._1)
+
   }
 }

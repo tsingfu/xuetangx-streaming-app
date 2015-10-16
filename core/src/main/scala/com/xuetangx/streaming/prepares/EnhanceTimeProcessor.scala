@@ -4,6 +4,7 @@ import java.text.SimpleDateFormat
 import java.util.TimeZone
 
 import com.xuetangx.streaming.StreamingProcessor
+import com.xuetangx.streaming.util.Utils
 import org.apache.spark.rdd.RDD
 import org.json4s.JsonAST.JField
 import org.json4s._
@@ -37,7 +38,7 @@ class EnhanceTimeProcessor extends StreamingProcessor {
       val jValue = parse(jsonStr)
 
       //获取时间字段取值
-      val time_old = compact(jValue \ timeKey) //发现字符串含有引号
+      val time_old = Utils.strip(compact(jValue \ timeKey),"\"") //发现字符串含有引号
       //        println("= = " * 10 +"E[DEBUG] time_old.length = " + time_old.length +", is startWith(引号)) "+ time_old.startsWith("\"") +", time_old=" + time_old)
 
       val cstTimeStr = get_cst_time(time_old)
@@ -61,7 +62,8 @@ class EnhanceTimeProcessor extends StreamingProcessor {
     }).filter(jsonStr => {
       // json4s 解析json字符串
       val jValue = parse(jsonStr)
-      compact(jValue \ timeKey).nonEmpty
+      val timeValue = Utils.strip(compact(jValue \ timeKey), "\"")
+      timeValue.nonEmpty
     })
 
   }
@@ -113,7 +115,7 @@ class EnhanceTimeProcessor extends StreamingProcessor {
         minStr = t.substring(3, 5)
         dtStr
       case _ => //时间字段格式不对，置null
-        println("WARNING: format_time() faield to format time = " + timeStr)
+        println("WARNING: format_time() failed to format time = " + timeStr)
         //        timeStr
         null
     }

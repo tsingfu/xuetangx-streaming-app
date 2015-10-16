@@ -1,0 +1,601 @@
+<configuation>
+
+    <apps>
+        <app id="1" interfaceId="1">
+            <properties>
+                <property>
+                    <name>batchDuration.seconds</name>
+                    <value>15</value>
+                    <description></description>
+                </property>
+
+                <!--TODO: 统计时间间隔配置放到计算统计指标阶段的配置部分-->
+                <property>
+                    <name>timeInterval.minutes.list</name>
+                    <value>1</value>
+                    <description>
+                        示例: `1,5,10`
+                        表示：需要增强的统计指标的时间维度1分钟，5分钟，10分钟
+                    </description>
+                </property>
+
+                <property>
+                    <name>checkpointDir</name>
+                    <value>/tmp/checkpoint_dir1</value>
+                    <description></description>
+                </property>
+
+                <property>
+                    <name>kafka.simple.consumer.api.used</name>
+                    <value>true</value>
+                    <description>是否使用 kafka simple consumer api</description>
+                </property>
+
+                <property>
+                    <name>kafka.consumer.group.id</name>
+                    <value></value>
+                    <description>当 kafka.simple.consumer.api.used = false 设置</description>
+                </property>
+
+                <property>
+                    <name>spark.streaming.kafka.maxRatePerPartition</name>
+                    <value></value>
+                    <description>当 kafka.simple.consumer.api.used = true 设置</description>
+                </property>
+
+                <property>
+                    <name>spark.streaming.kafka.maxRetries</name>
+                    <value></value>
+                    <description>当 kafka.simple.consumer.api.used = true 设置</description>
+                </property>
+
+
+                <!--调优参数-->
+                <property>
+                    <name>checkpointDir</name>
+                    <value>/tmp/xuetangx-streaming-app</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>spark.streaming.blockInterval</name>
+                    <value>200</value>
+                    <description>
+                        Interval at which data received by Spark Streaming receivers is chunked into
+                        blocks of data before storing them in Spark. Minimum recommended - 50 ms.
+                    </description>
+                </property>
+
+                <property>
+                    <name>spark.streaming.receiver.maxRate</name>
+                    <value></value>
+                    <description>Maximum rate (number of records per second) at which each receiver will receive data.
+                        Effectively, each stream will consume at most this number of records per second.
+                        Setting this configuration to 0 or a negative number will put no limit on the rate.
+                        See the deployment guide in the Spark Streaming programing guide for mode details.
+                    </description>
+                </property>
+
+                <property>
+                    <name>spark.sql.shuffle.partitions</name>
+                    <value>5</value>
+                    <description>
+                        default:200. Configures the number of partitions to use when shuffling data for joins or aggregations.
+                    </description>
+                </property>
+            </properties>
+        </app>
+    </apps>
+
+    <dataSources>
+        <source id="1" type="kafka" name="ds_kafka1">
+            <properties>
+                <property>
+                    <name>zookeeper.connect</name>
+                    <!--<value>hadoop1:9092,hadoop2:9092,hadoop3:9092</value>-->
+                    <!--<value>192.168.9.243:2181,192.168.9.240:2181,192.168.9.190:2181</value>-->
+                    <!--<value>192.168.9.243:2181</value>-->
+                    <value>localhost:2181</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>metadata.broker.list</name>
+                    <!--<value>hadoop1:9092,hadoop2:9092,hadoop3:9092</value>-->
+                    <!--<value>192.168.9.243:9092,192.168.9.240:9092,192.168.9.190:9092,192.168.9.164:9092</value>-->
+                    <!--org.apache.spark.SparkException: Couldn't find leader offsets for Set([topic1-platformlog,1], [topic2-vpclog,2], [topic1-platformlog,0], [topic2-vpclog,0], [topic2-vpclog,1], [topic1-platformlog,2])-->
+                    <value>localhost:9092</value>
+                    <description></description>
+                </property>
+            </properties>
+        </source>
+
+        <source id="2" type="jdbc" name="ds_mysqldb1">
+            <properties>
+                <property>
+                    <name>driver</name>
+                    <value>com.mysql.jdbc.Driver</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>url</name>
+                    <!--<value>db.jdbc:mysql://mysql1:3306/xuetangx1</value>-->
+                    <!--<value>db.jdbc:mysql://192.168.9.228:3306/edxapp</value>-->
+                    <value>jdbc:mysql://192.168.9.228:3306/edxapp</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>user</name>
+                    <value>root</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>password</name>
+                    <!--<value>mysql123</value>-->
+                    <value></value>
+                    <description></description>
+                </property>
+            </properties>
+        </source>
+
+        <source id="3" type="mongo" name="ds_mongodb1">
+            <properties>
+                <property>
+                    <name>url</name>
+                    <value>mongodb://192.168.9.164:27017</value>
+                    <description></description>
+                </property>
+            </properties>
+        </source>
+
+        <source id="4" type="elasticsearch" name="ds_es1">
+            <properties>
+                <property>
+                    <name>cluster.name</name>
+                    <value>ES_Cluster1</value>
+                    <!--<value>elasticsearch</value>-->
+                    <description></description>
+                </property>
+                <property>
+                    <name>serverPort.list</name>
+                    <value>172.17.0.7:9300</value>
+                    <description></description>
+                </property>
+            </properties>
+        </source>
+
+        <source id="5" type="elasticsearch" name="ds_es2">
+            <properties>
+                <property>
+                    <name>cluster.name</name>
+                    <value>elasticsearch</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>serverPort.list</name>
+                    <value>192.168.9.164:9300</value>
+                    <description></description>
+                </property>
+            </properties>
+        </source>
+
+    </dataSources>
+
+    <dataInterfaces phase="1">
+        <interface id="1" type="input" sourceId="1" name="di_kafka1">
+            <properties>
+                <property>
+                    <name>topics</name>
+                    <value>topic1-platformlog,topic2-vpclog</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>type</name>
+                    <value>json</value>
+                    <description></description>
+                </property>
+            </properties>
+        </interface>
+
+        <interface id="2" type="output" sourceId="3" name="di_mongdb1">
+            <properties>
+                <property>
+                    <name>db</name>
+                    <value>test</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>collection</name>
+                    <value>test_stats_min_1</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>class</name>
+                    <value>com.xuetangx.streaming.output.ConsolePrinter</value>
+                    <description>
+                        输出类：默认com.xuetangx.streaming.output.ConsolePrinter
+                    </description>
+                </property>
+            </properties>
+        </interface>
+
+        <!--<interface id="3" type="output" sourceId="4" name="di_es1">-->
+        <interface id="3" type="output" sourceId="4" name="di_es1">
+            <properties>
+                <property>
+                    <name>index</name>
+                    <value>realtime-stats</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>type</name>
+                    <value>register_minute_1</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>id.key.delimiter</name>
+                    <value>-</value>
+                    <description>
+                        默认:-
+                    </description>
+                </property>
+                <property>
+                    <name>value.key</name>
+                    <value>value</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>value.type</name>
+                    <value>long</value>
+                    <description></description>
+                </property>
+
+            </properties>
+        </interface>
+
+    </dataInterfaces>
+
+    <!-- -->
+    <externalCaches>
+        <cache id="1" sourceId="2">
+            <properties>
+                <property>
+                    <name>tableName</name>
+                    <value>api_deviceinfo</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>keyName</name>
+                    <value>uuid</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>cache.keyName.list</name>
+                    <value>channel,event</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>batchLimit</name>
+                    <value>50</value>
+                    <description></description>
+                </property>
+                <property>
+                    <name>cache.query.condition.enabled</name>
+                    <value>true</value>
+                    <description>
+                        是否启用外部关联条件查询
+                    </description>
+                </property>
+
+                <property>
+                    <name>maxActive</name>
+                    <value>100</value>
+                    <description></description>
+                </property>
+
+                <property>
+                    <name>initialSize</name>
+                    <value>10</value>
+                    <description></description>
+                </property>
+
+                <property>
+                    <name>maxIdle</name>
+                    <value>100</value>
+                    <description></description>
+                </property>
+
+
+                <property>
+                    <name>minIdle</name>
+                    <value>10</value>
+                    <description></description>
+                </property>
+
+                <property>
+                    <name>maxWait</name>
+                    <value>10000</value>
+                    <description></description>
+                </property>
+
+            </properties>
+        </cache>
+    </externalCaches>
+
+    <prepares id="1" interfaceId="1" phase="2">
+        <!--
+                <step id="2" type="filter" method="spark-sql" enabled="true">
+                    <properties>
+                        <property>
+                            <name>selectExprClause</name>
+                            <value></value>
+                            <description>
+                                设置需要用到的字段名，流程：读入数据后，转换为spark-SQL的DataFrame，然后进行 selectExp，仅保留需要的数据
+                                空时，默认取*
+                            </description>
+                        </property>
+                        <property>
+                            <name>whereClause</name>
+                            <value></value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+                <step id="3" type="filter" method="plugin" enabled="true">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.process.StreamingProcessorDemo1</value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+                <step id="4" type="enhance" method="plugin" enabled="false">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.process.StreamingProcessorDemo1</value>
+                            <description></description>
+                        </property>
+                        <property>
+                            <name>cacheManager</name>
+                            <value>JdbcCacheManager</value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+                <step id="5" type="enhance" method="spark-sql" enabled="false">
+                    <properties>
+                        <property>
+                            <name>selectExprClause</name>
+                            <value></value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+        -->
+    </prepares>
+
+    <prepares preparesId="2" interfaceId="2" phase="2"></prepares>
+
+    <!--1期不支持多个流数据上不同指标的合并-->
+    <computeStatistics id="1" interfaceId="1" phase="3">
+        <computeStatistic id="1" enabled="true">
+            <prepares>
+                <step id="1" type="filter" method="plugin" enabled="true">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.prepares.FilterRegisterProcessor</value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+
+                <step id="2" type="filter" method="spark-sql" enabled="true">
+                    <properties>
+                        <property>
+                            <name>selectExprClause</name>
+                            <value>time, username, uuid, event_uid, event_type, agent, origin_referer, spam</value>
+                            <description>设置需要用到的字段名，流程：读入数据后，转换为spark-SQL的DataFrame，然后进行 selectExp，仅保留需要的数据</description>
+                        </property>
+                        <property>
+                            <name>whereClause</name>
+                            <value>substr(event_uid, 0, 1) != '!' and event_uid != '' and event_type in ('common.student.account_created','common.student.account_success','oauth.user.register','oauth.user.register_success','weixinapp.user.register_success','api.user.oauth.register_success','api.user.register','api.user.register_success')</value>
+                            <!--<value>event_type="common.student.account_success"</value>-->
+                            <description>
+                                过滤注册成功类型的日志
+                            </description>
+                        </property>
+                    </properties>
+                </step>
+
+                <step id="3" type="enhance" method="plugin" enabled="true">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.prepares.EnhancePlatformProcessor</value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+
+                <step id="4" type="enhance" method="plugin" enabled="true">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.prepares.EnhanceTimeProcessor</value>
+                            <description></description>
+                        </property>
+                        <property>
+                            <name>timeKeyName</name>
+                            <value>time</value>
+                            <description></description>
+                        </property>
+                        <property>
+                            <name>add.timeKeyInterval.minutes.list</name>
+                            <value>1</value>
+                            <description>
+                                示例: `1,5,10`
+                                表示：需要增强的统计指标的时间维度1分钟，5分钟，10分钟
+                            </description>
+                        </property>
+                        <property>
+                            <name>add.timeKeyName.list</name>
+                            <value>time_minute_1</value>
+                            <description></description>
+                        </property>
+                    </properties>
+                </step>
+
+                <!--外部缓存关联-->
+                <step id="5" type="enhance" method="plugin" enabled="true">
+                    <properties>
+                        <property>
+                            <name>class</name>
+                            <value>com.xuetangx.streaming.prepares.JdbcCacheBatchQueryProcessor</value>
+                            <description></description>
+                        </property>
+
+                        <property>
+                            <name>cacheId</name>
+                            <value>1</value>
+                            <description></description>
+                        </property>
+
+                        <!--
+                                            <property>
+                                                <name>cacheManager</name>
+                                                <value>JdbcCacheManager</value>
+                                                <description></description>
+                                            </property>
+                        -->
+
+                        <property>
+                            <name>batchProcessor.class.list</name>
+                            <value>com.xuetangx.streaming.prepares.EnhanceApiDeviceInfoProcessor</value>
+                            <description>
+                                默认： 如果没有不做关联，原值返回
+                                可以指定多个classname，逗号分隔
+                            </description>
+                        </property>
+
+                    </properties>
+                </step>
+
+                <step id="6" type="batchDeduplicate" method="spark-sql" enabled="true">
+                    <properties>
+                        <property>
+                            <name>unique.key</name>
+                            <value>uuid</value>
+                            <description>批次间排重</description>
+                        </property>
+                    </properties>
+                </step>
+
+            </prepares>
+
+            <computes>
+                <step id="7" type="compute" method="spark-sql" enabled="true">
+                    <!-- 计算后的结果形式
+                      计算的指标在配置是最好每个时间维度，放在不同的step中，输出能够统一
+                    -->
+                    <properties>
+                        <property>
+                            <name>statisticKeyMap</name>
+                            <!--<value>T1:time_min_1,L1:host,L2:platform,L3.1:origin_referer,L3.2:spam</value>-->
+                            <!--<value>L1:uid,L2:platform,L3.1:origin_referer,T1:time_minute_1</value>-->
+                            <value>L1:host,L2:platform,L3.1:origin_referer,L3.2:spam,T1:time_minute_1</value>
+                            <description>
+                                参考了以前离线计算的配置方式，用于简化统计指标维度(targetKeysList)的配置
+                            </description>
+                        </property>
+
+                        <property>
+                            <name>targetKeysList</name>
+                            <!--<value>L1:T1,L2:T1,L1:L2:T1</value>-->
+                            <!--<value>L1:T1,L2:T1,L1:L2:T1</value>-->
+                            <!--<value>L2:T1</value>-->
+                            <!--<value>L2:T1,L3.1:T1</value>-->
+                            <!--TODO: 添加 data_type, value_type -->
+                            <value>L2:T1</value>
+                            <description>各统计指标维度的keys列表</description>
+                        </property>
+
+                        <property>
+                            <name>uk.method.label.list</name>
+                            <value>username:countDistinct:users</value>
+                            <!--<value>uid:count:users</value>-->
+                            <description>
+                                uk: count/countDistinct的字段名
+                                method: count/countDistinct/sum 聚合操作的函数名
+                                label: 统计标签类型
+                            </description>
+                        </property>
+
+                        <!--为减少spark-job数，相同数据接口的rdd可以进行union，只制定一个输出接口-->
+                        <!--
+                                                <property>
+                                                    <name>output.dataInterfaceId.list</name>
+                                                    <value>,2,2</value>
+                                                    <description>
+                                                        不配置输出数据接口id,默认输出方式： println
+                                                        可以为每个统计维度的结果(1个rdd)指定一个数据接口。
+                                                        Note: 为减少spark-job数，相同数据接口的rdd可以进行union
+                                                    </description>
+                                                </property>
+                        -->
+
+                        <property>
+                            <name>output.class</name>
+                            <!--<value>com.xuetangx.streaming.output.ConsolePrinter</value>-->
+                            <value>com.xuetangx.streaming.output.elasticsearch.ESWriter</value>
+                            <description>
+                                默认com.xuetangx.streaming.output.ConsolePrinter：输出到日志文件
+                            </description>
+                        </property>
+
+                        <property>
+                            <name>output.dataInterfaceId</name>
+                            <value>3</value>
+                            <description>
+                                需要根据output.class指定的插件类配置
+                            </description>
+                        </property>
+                    </properties>
+                </step>
+
+            </computes>
+
+
+            <!--
+                        &lt;!&ndash;输出需要插件类实现
+                        //TODO: 支持多个目的地输出
+                        &ndash;&gt;
+                        <outputs>
+                            <step id="6" type="output" computeId="4" enabled="true">
+                                <properties>
+                                    <property>
+                                        <name>output.class</name>
+                                        <value>com.xuetangx.streaming.output.ConsolePrinter</value>
+                                        <description>
+                                            默认com.xuetangx.streaming.output.ConsolePrinter：输出到日志文件
+                                        </description>
+                                    </property>
+                                    <property>
+                                        <name>output.dataInterfaceId</name>
+                                        <value>3</value>
+                                        <description>
+                                            需要根据output.class指定的插件类配置
+                                        </description>
+                                    </property>
+                                </properties>
+                            </step>
+                        </outputs>
+            -->
+
+        </computeStatistic>
+
+    </computeStatistics>
+
+    <computeStatistics id="2" interfaceId="2" phase="3"></computeStatistics>
+
+</configuation>

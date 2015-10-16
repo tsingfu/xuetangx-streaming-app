@@ -102,4 +102,11 @@ object Utils {
     //    (outerAttrMap, res.toMap)
     res.toMap
   }
+
+
+
+  def strip(str: String, trimStr: String): String ={
+    str.stripPrefix(trimStr).stripSuffix(trimStr)
+  }
+
 }

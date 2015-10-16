@@ -26,6 +26,8 @@ object StreamingApp {
       System.exit(1)
     }
     val Array(master, appName, confFileXml, appId) = args
+
+
     // 解析配置
     val conf = XML.load(confFileXml)
     /*
@@ -53,7 +55,10 @@ object StreamingApp {
     }
 
     // 外部缓存的配置
-    val cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id")
+//    val cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id")
+    val cachesPropMap = Utils.parseProperties2Map(conf\ "externalCaches", "cache", "cache.id").map{case (cacheId, confMap)=>
+      (cacheId, confMap ++ dataSourcesPropMap(confMap("cache.sourceId")))
+    }
 
     // 指定的输入接口配置（含数据源信息）
     val inputInterfacePropMap = dataInterfacesPropMap(interfaceId) ++
@@ -104,6 +109,10 @@ object StreamingApp {
       case _ =>
     }
 
+    //TODO: 测试配置
+    val appConf = new AppConf()
+    appConf.init(confFileXml, appId)
+
     val batchDurationSeconds = appsPropMap(appId)("batchDuration.seconds").toInt
     val ssc = new StreamingContext(sc, Seconds(batchDurationSeconds))
     // TODO: spark-streaming 调优设置
@@ -139,7 +148,8 @@ object StreamingApp {
     val instance = Class.forName(clz).newInstance().asInstanceOf[StreamingApp]
     //  流数据处理流程
     instance.process(stream, ssc, sqlc, 
-      inputInterfacePropMap, outputInterfacesPropMap, 
+      inputInterfacePropMap, outputInterfacesPropMap,
+      cachesPropMap,
       preparesActivePropSeq, computesActiveConfTupleSeq)
 
     ssc.start()
@@ -167,6 +177,7 @@ class StreamingApp extends Serializable with Logging {
               sqlc: SQLContext,
               inputInterfaceConfMap: Map[String, String],
               outputInterfacesPropMap: Map[String, Map[String, String]],
+              cachesPropMap: Map[String, Map[String, String]],
               preparesActivePropSeq: Seq[(String, Map[String, String])],
               computesActiveConfTupleSeq: Seq[(String, Seq[(String, Map[String, String])])]): Unit = {
 
@@ -265,7 +276,7 @@ class StreamingApp extends Serializable with Logging {
                   println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] + ", prepares.step.id = " + id)
                   println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", prepares.step.id = " + id)
                   val res = processStep(res_any, res_schema, sqlc,
-                    confMap, outputInterfacesPropMap,
+                    confMap, cachesPropMap, outputInterfacesPropMap,
                     phaseStep)
                   res_any = res._1
                   res_schema = res._2
@@ -333,7 +344,7 @@ class StreamingApp extends Serializable with Logging {
                 println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
                 println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
                 val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc,
-                  confMap, outputInterfacesPropMap,
+                  confMap, cachesPropMap, outputInterfacesPropMap,
                   phaseStep)
                 res_any_in_computeStatistic = res._1
                 res_schema_in_computeStatistic = res._2
@@ -381,7 +392,7 @@ class StreamingApp extends Serializable with Logging {
 //                    println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
 //                    println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
                     val res = processStep(rddJson, null, sqlc,
-                      confMap, outputInterfacesPropMap,
+                      confMap, cachesPropMap, outputInterfacesPropMap,
                       phaseStep)
 
                     logInfo("[myapp] finish processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
@@ -413,7 +424,7 @@ class StreamingApp extends Serializable with Logging {
 
                     // TODO: 删除DEBUG信息
 //                    df_tmp.printSchema()
-                    df_tmp.show()
+//                    df_tmp.show()
 
                     res_schema_in_computeStatistic2 = df.schema
 
@@ -478,7 +489,7 @@ class StreamingApp extends Serializable with Logging {
 //                      println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
 //                      println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
                       val res = processStep(rdd2, res_schema_in_computeStatistic2, sqlc,
-                        confMap, outputInterfacesPropMap,
+                        confMap, cachesPropMap, outputInterfacesPropMap,
                         phaseStep)
 
                       logInfo("[myapp] finish processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
@@ -496,12 +507,17 @@ class StreamingApp extends Serializable with Logging {
                   res_schema: StructType,
                   sqlc: SQLContext,
                   confMap: Map[String, String],
+                  cachesPropMap: Map[String, Map[String, String]] = null,
                   outputInterfacesPropMap: Map[String, Map[String, String]] = null,
                   phaseStep: String = null): (Any, StructType) = {
     
     logInfo("[myapp] processStep start preocessing phaseStep = " + phaseStep)
     val stepType = confMap("step.type")
     val stepMethod = confMap("step.method")
+    val cachePropMap = confMap.get("cacheId") match {
+      case Some(x) if x.nonEmpty => cachesPropMap(x)
+      case _ => null
+    }
 
     stepType match {
       case "filter" | "enhance" =>
@@ -513,6 +529,8 @@ class StreamingApp extends Serializable with Logging {
               case x: DataFrame => x
             }
 
+            println("= = " * 10 + "[myapp StreamingApp.processStep.prepares] df.schema = " + df.printSchema())
+
             if (df.schema.fieldNames.nonEmpty) {
               val selectExprClause = confMap.getOrElse("selectExprClause", null)
               val whereClause = confMap.getOrElse("whereClause", null)
@@ -520,15 +538,24 @@ class StreamingApp extends Serializable with Logging {
               val selectUsed = if (selectExprClause != null && selectExprClause.nonEmpty) true else false
               val whereUsed = if (whereClause != null && whereClause.nonEmpty) true else false
 
+              //TODO: 删除测试信息
+              println("= = " * 10 +"[myapp StreamingApp.processStep.prepares] selectUsed = "  + selectUsed + ", selectExprClause = " + selectExprClause)
+              println("= = " * 10 +"[myapp StreamingApp.processStep.prepares] whereUsed = "  + whereUsed + ", whereClause = " + whereClause)
+
+              println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", df = ")
+              df.printSchema()
+              df.show()
+
               val df2 = if (selectUsed && whereUsed){
-                df.selectExpr(selectExprClause).filter(whereClause)
+                df.selectExpr(selectExprClause.split(","): _*).filter(whereClause)
               } else if (selectUsed && (! whereUsed)) {
-                df.selectExpr(selectExprClause)
+                df.selectExpr(selectExprClause.split(","): _*)
               } else if ((! selectUsed) && whereUsed) {
                 df.filter(whereClause)
               } else df
 
-              println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", dataFrame = ")
+              println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
+              df2.printSchema()
               df2.show()
               (df2, df2.schema)
             } else { // 空的 DataFrame
@@ -539,12 +566,13 @@ class StreamingApp extends Serializable with Logging {
           case "plugin" => //插件类处理后，结构可能变化，
             val plugin = Class.forName(confMap("class")).newInstance().asInstanceOf[StreamingProcessor]
 
+
             //TODO: 如何判断数据为空的情况
             val rdd2 = res_any match {
-              case x: RDD[String] => plugin.process(x, confMap)
+              case x: RDD[String] => plugin.process(x, confMap, cachePropMap)
               case x: DataFrame =>
                 //TODO: 支持更好的控制
-                plugin.process(x.toJSON, confMap)
+                plugin.process(x.toJSON, confMap, cachePropMap)
             }
             println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], rdd.length = " + rdd2.partitions.length)
             (rdd2, null)
@@ -552,6 +580,7 @@ class StreamingApp extends Serializable with Logging {
 
       case "compute" =>
 
+        //TODO: union 统计结果的 rdd，可以减少 job 的数量，增加 partition 数量，增加任务并行
         // 构造保存统计指标的rdd
         var rdd_result = sqlc.sparkContext.parallelize(Array[String]())
 //        println("= = " * 20 + "[myapp  processStep.compute union] initial rdd_result.partitions.length = " + rdd_result.partitions.length)
@@ -594,7 +623,6 @@ class StreamingApp extends Serializable with Logging {
               val plugin = Class.forName(outputClzStr).newInstance().asInstanceOf[StreamingProcessor]
               logInfo("[myapp processStep.compute ] output result of statistics")
 
-
               for (targetKeys <- targetKeysList.split(",")) {
                 val groupByKeys = targetKeys.split(":").map(statisticKeyMap(_))
                 ukMethodLabelList.foreach { case (key, method, label) =>
@@ -614,6 +642,7 @@ class StreamingApp extends Serializable with Logging {
 //                      println("= = " * 20 + "[myapp  processStep.compute.countDistinct after union] rdd_result.partitions.length = " + rdd_result.partitions.length)
                   }
 
+                  //TODO: 增加 data_type, value_type 等信息到统计指标的json中，是否放在 output插件类中（放到插件类需要一些配置）
                   //增加统计指标的维度到配置(keys=groupByKeys.mkString(","))
 
 
@@ -626,8 +655,6 @@ class StreamingApp extends Serializable with Logging {
                   plugin.output(rdd_stat, outputConfMap + ("id.keyNames"->groupByKeys.mkString(",")))
                 }
               }
-
-
 
               df.unpersist()
             } else {
