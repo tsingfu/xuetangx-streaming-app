@@ -1,12 +1,16 @@
 package com.xuetangx.streaming.output.elasticsearch
 
 import com.xuetangx.streaming.StreamingProcessor
+import org.apache.commons.codec.digest.DigestUtils
 import org.apache.spark.rdd.RDD
+import org.elasticsearch.action.get.GetResponse
 import org.elasticsearch.action.index.IndexRequest
 import org.elasticsearch.action.update.UpdateRequest
 import org.elasticsearch.client.Client
 import org.elasticsearch.common.xcontent.XContentFactory._
 import org.elasticsearch.common.xcontent.XContentHelper
+import org.elasticsearch.indices.IndexMissingException
+import org.elasticsearch.script.ScriptService.ScriptType
 import org.json4s.DefaultFormats
 import org.json4s.jackson.JsonMethods._
 
@@ -30,30 +34,69 @@ class ESWriter extends StreamingProcessor {
       
       val idx = confMap("index")
       val typ = confMap("type")
-//      val idKey = confMap("id.key") //Note：取统计维度的所有属性值
-      val idKeys = confMap("id.keyNames").split(",") //取值对应targetKeysList中各统计指标维度名，逗号分隔
+//      val idKeys = confMap("statistic.key").split(",") //取值对应targetKeysList中各统计指标维度名，逗号分隔
+      val idKeys = confMap("origin.statistic.key").split(",") //取值对应targetKeysList中各统计指标维度名，逗号分隔
       val valueKey = confMap("value.key")
       val valueType = confMap("value.type")
+
+      val esAddUpdateMethod = confMap.get("add.update.method") match {
+        case Some(x) if x.nonEmpty => x
+        case _ => "getAndUpdate"
+      }
+
+      val esScriptEnable = if(esAddUpdateMethod == "script") {
+        confMap.get("script.enabled") match {
+          case Some(x) if x.toLowerCase == "true" => true
+          case _ => false
+        }
+      } else false
+
+      val esScriptName: String = if (esScriptEnable) {
+        confMap.get("script.name") match {
+          case Some(x) if x.nonEmpty => x
+          case _ => throw new Exception("Found invalid configuration: script.name is nonEmpty which is not allowed")
+        }
+      } else {
+        ""
+      }
+
+
+      val esScriptParam: String = if (esScriptEnable) {
+        confMap.get("script.param") match {
+          case Some(x) if x.nonEmpty => x
+          case _ => throw new Exception("Found invalid configuration: script.name is nonEmpty which is not allowed")
+        }
+      } else {
+        ""
+      }
+
       val excludingKeys = Set(valueKey)
 
       val idKeyDelimiter = confMap.get("id.key.delimiter") match {
         case Some(x) if x.nonEmpty => x
-        case _ => "-"
+        case _ => "#"
       }
       implicit val formats = DefaultFormats
 
       var cnt: Long = 0
-      var sum: Long = 0
       //TODO: 批量提交
       iter.foreach(jsonStr => {
 
         // json转换为map
         val jValue = parse(jsonStr)
-
         val jMap = jValue.extract[Map[String, String]]
 
-        val id = idKeys.map(k=>jMap(k)).mkString(idKeyDelimiter)
-//        val id = jMap(idKey)
+        val DEFAULT_GROUPBY_NONE_VALUE = "NONE"
+        val GROUPBY_NONE_VALUE = confMap.get("groupby.none.key") match {
+          case Some(x) if x.nonEmpty => x
+          case _ => DEFAULT_GROUPBY_NONE_VALUE
+        }
+
+        val id = idKeys.map(k=>{
+          if (k == GROUPBY_NONE_VALUE) GROUPBY_NONE_VALUE else jMap(k)
+        }).mkString(idKeyDelimiter)
+        val md5Id = DigestUtils.md5Hex(id.getBytes("iso-8859-1"))
+
         val valueStr = jMap(valueKey)
         // Note：
         val value = valueType.toLowerCase match {
@@ -63,33 +106,111 @@ class ESWriter extends StreamingProcessor {
           case _ => valueStr
         }
 
+
         val source = jsonBuilder().startObject().field(valueKey, value)
-        jMap.foreach{case (k, v)=> 
-          if (!excludingKeys.contains(k))
+        jMap.foreach{case (k, v) =>
+          if (!excludingKeys.contains(k)){
+            logDebug("= = " * 20 +"[myapp ESWriter.output] source.field = " + k +" => " +v)
             source.field(k, v)
+          }
         }
         source.endObject()
-        
-        val indexRequest = new IndexRequest(idx, typ, id)
-                .source(source)
-        val updateRequest = new UpdateRequest(idx, typ, id)
-                .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value)
-                .upsert(indexRequest)
+        val indexRequest = new IndexRequest(idx, typ, md5Id).source(source)
 
-        client.update(updateRequest).get()
+        if (esAddUpdateMethod == "getAndUpdate") { // 方式1：先查询再更新
 
-        // TODO: 删除测试信息
-        println("= = " * 20 + "[myapp ESWriter.output] jsonStr = " + jsonStr +
-                ", source = " + XContentHelper.convertToJson(indexRequest.source(), true) +
-                ", jMap = " + jMap.mkString("[", ",", "]") +
-                ", " + s"ctx._source.$valueKey += $valueStr")
+          var getResponse: GetResponse = null
+          try{
+            getResponse = client.prepareGet(idx, typ, md5Id).execute().actionGet()
+
+            if (getResponse.isExists) { // 存在，update
+            val existValueStr = getResponse.getSourceAsMap.get(valueKey).toString
+              val newValue = valueType.toLowerCase match {
+                case "int" | "interger" => existValueStr.toInt + valueStr.toInt
+                case "long" => existValueStr.toLong + valueStr.toLong
+                case "double" => existValueStr.toDouble + valueStr.toDouble
+                case _ => existValueStr + valueStr
+              }
+              val updateRequest = new UpdateRequest(idx, typ, md5Id)
+                      .doc(jsonBuilder().startObject().field(valueKey, newValue).endObject())
+              client.update(updateRequest).get()
+            } else { // 不存在，index
+              logWarning("found document " + idx + "." + typ +"." + md5Id + "does not exists, create it")
+              client.prepareIndex(idx, typ, md5Id).setSource(source).execute().actionGet()
+            }
+
+          } catch {
+            case ex: IndexMissingException => //不存在，index
+              logWarning("found index " + idx + "." + typ +"." + md5Id + "does not exists, create it")
+              client.prepareIndex(idx, typ, md5Id).setSource(source).execute().actionGet()
+            case ex: Exception =>
+              throw ex
+          }
+
+        } else { // 方式2：脚本方式
+          val updateRequest =
+            (if (esScriptEnable) {
+              new UpdateRequest(idx, typ, md5Id)
+                      .script(esScriptName, ScriptType.FILE).addScriptParam(esScriptParam, value)
+            } else {
+              new UpdateRequest(idx, typ, md5Id)
+                      .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value)
+            }).upsert(indexRequest)
+
+          client.update(updateRequest).get()
+
+          logDebug("= = " * 20 + "[myapp ESWriter.output] jsonStr = " + jsonStr +
+                  ", source = " + XContentHelper.convertToJson(indexRequest.source(), true) +
+                  ", jMap = " + jMap.mkString("[", ",", "]") +
+                  ", " + s"ctx._source.$valueKey += $valueStr")
+        }
         cnt += 1
-        sum += valueStr.toLong
       })
-      if(cnt > 0) println("= = " * 20 + "[myapp ESWriter.output] cnt = " + cnt + ", sum = " + sum)
+      if(cnt > 0) logDebug("= = " * 20 + "[myapp ESWriter.output] cnt = " + cnt)
       client.close()
     })
   }
 
+  /**定义输出统计指标前的进行的操作，用于附加信息
+    *
+    * @param rdd
+    * @param confMap
+    * @return
+    */
+  override def pre_output(rdd: RDD[String], confMap: Map[String, String]): RDD[String] ={
+
+    val STATISTIC_INFO_PREFIX_KEY = "statistic."
+
+//    val key = confMap("statistic.key")
+//    val keyLevel = confMap("statistic.keyLevel")
+//    val dataType = confMap("statistic.data_type")
+//    val valueType = confMap("statistic.value_type")
+
+    val addFieldsMap = confMap.filter{case (k, v) => k.startsWith(STATISTIC_INFO_PREFIX_KEY)}
+            .map{case (k, v) => (k.stripPrefix(STATISTIC_INFO_PREFIX_KEY), v)}
+    val addFieldJsonStr = addFieldsMap.map{case (k, v) => "\"" +k +"\":\"" + v +"\""}.mkString("{", ",", "}")
+
+    //val timeKey = confMap("timeKey")
+
+    rdd.map(jsonStr=>{
+      val jValue = parse(jsonStr)
+
+      //添加以 statistic. 开头的属性
+      val jValue_new1 = jValue.merge(parse(addFieldJsonStr))
+      val raw_data = compact(jValue_new1)
+
+      // TODO: 不放在此处，增加 start_date, end_date
+      //val time = compact(jValue \ timeKey)
+
+      // 添加 raw_data
+//      val jValue_new2 = Json4sUtils.addField(jValue_new1, "raw_data", raw_data)
+
+      val jValue_new2 = jValue_new1.merge(parse("{\"raw_data\": \"" +  raw_data.replace("\"", "\\\"") + "\"}"))
+
+      val res = compact(jValue_new2)
+      logDebug("= = " * 20 +"[myapp ESWriter.pre_output] res = " + res)
+      res
+    })
+  }
 
 }

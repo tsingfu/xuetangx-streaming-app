@@ -27,13 +27,13 @@ class EnhanceTimeProcessor extends StreamingProcessor {
                        dataSourceConfMap: Map[String, String] = null): RDD[String] = {
 
     val timeKey = confMap("timeKeyName")
-    val timeKeyAdd = confMap("add.timeKeyName.list")
+//    val timeKeyAdd = confMap("add.timeKeyName.list")
     val timeIntervalMinutesList = confMap("add.timeKeyInterval.minutes.list")
 
-    val timeKeyIntervalList = timeKey.split(",").map(_.trim).zip(timeIntervalMinutesList.split(",").map(_.trim.toInt))
+//    val timeKeyIntervalList = timeKeyAdd.split(",").map(_.trim).zip(timeIntervalMinutesList.split(",").map(_.trim.toInt))
 
     rdd.map(jsonStr=>{
-      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr)
+//      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr)
       // json4s 解析json字符串
       val jValue = parse(jsonStr)
 
@@ -49,22 +49,29 @@ class EnhanceTimeProcessor extends StreamingProcessor {
         case JField(`timeKey`, _) => (timeKey, JString(cstTimeStr))
       }
 
-      // 2新增统计指标时间粒度
-      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeKeyIntervalList.mkString("[", ",", "]")
-              +", timeKey = " + timeKey +", timeKeyAdd " + timeKeyAdd +", timeIntervalMinutesList = " + timeIntervalMinutesList)
-      timeKeyIntervalList.foreach{case (timeKeyName, timekeyInterval) =>
-        val addedTimeValue = get_timeKey(cstTimeStr, timekeyInterval)
-        val jsonStr_adding =  "{\"" + timeKeyAdd +"\":\"" + addedTimeValue +"\"}"
+      // 2新增统计指标时间粒度 start_date, end_date
+//      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeKeyIntervalList.mkString("[", ",", "]")
+//              +", timeKey = " + timeKey +", timeKeyAdd " + timeKeyAdd +", timeIntervalMinutesList = " + timeIntervalMinutesList)
+//      timeKeyIntervalList.foreach{case (timeKeyName, timekeyInterval) =>
+      timeIntervalMinutesList.split(",").map(_.trim.toInt).foreach{case timekeyInterval =>
+        // val addedTimeValue = get_timeKey(cstTimeStr, timekeyInterval)
+        val (start_date_str, end_date_str) = get_timeKey(cstTimeStr, timekeyInterval)
+
+//        val start_date = DEFAULT_sdf_cst_second.parse(start_date_str)
+//        val end_date = DEFAULT_sdf_cst_second.parse(end_date_str)
+
+        //val jsonStr_adding =  "{\" start_date\": \"" + addedTimeValue +"\"}"
+        val jsonStr_adding =  "{\"start_date\": \"" + start_date_str +"\", \"end_date\": \"" + end_date_str + "\"}"
         jValue_new = jValue_new.merge(parse(jsonStr_adding))
         println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
       }
-      compact(jValue_new)
-    }).filter(jsonStr => {
+      jValue_new
+    }).filter(jValue => {
       // json4s 解析json字符串
-      val jValue = parse(jsonStr)
+      //val jValue = parse(jsonStr)
       val timeValue = Utils.strip(compact(jValue \ timeKey), "\"")
       timeValue.nonEmpty
-    })
+    }).map(jValue => compact(jValue))
 
   }
 
@@ -138,8 +145,12 @@ class EnhanceTimeProcessor extends StreamingProcessor {
   val DEFAULT_datetimePattern = "yyyy-MM-dd HH:mm:ss"
   val DEFAULT_sdf_cst = new SimpleDateFormat(DEFAULT_datetimePattern)
   DEFAULT_sdf_cst.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
-  val DEFAULT_sdf_cst2 = new SimpleDateFormat("yyyyMMddHH")
-  DEFAULT_sdf_cst2.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
+
+  val DEFAULT_sdf_cst_hour = new SimpleDateFormat("yyyy-MM-dd HH")
+  DEFAULT_sdf_cst_hour.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
+  val DEFAULT_sdf_cst_second = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+  DEFAULT_sdf_cst_second.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
+
 
   /**
    * 获取特定格式的时间字符串(如2015-09-22 16:01:01)(CST时间)对应的时间范围
@@ -147,20 +158,28 @@ class EnhanceTimeProcessor extends StreamingProcessor {
    * @param intervalInMin 时间间隔粒度，要求能够被60整除
    * @return
    */
-  def get_timeKey(timeStr: String, intervalInMin: Int): String = {
-    if (timeStr == null || timeStr.isEmpty) return ""
+  def get_timeKey(timeStr: String, intervalInMin: Int): (String, String) = {
+    if (timeStr == null || timeStr.isEmpty) return ("", "")
     else {
       val date = DEFAULT_sdf_cst.parse(timeStr)
       val minutes = date.getMinutes
       val start = scala.math.floor(minutes / intervalInMin).toInt * intervalInMin
-      val end = start + intervalInMin
-      //      println("start = " + start +", end = " + end)
-//      timeStr.substring(0, 10) +":"+ timeStr.substring(11, 14) +
-//              (if (start < 10) "0" else "") + start + "-" +
-//              (if (end < 10) "0" else "") + end
-      DEFAULT_sdf_cst2.format(date) +
+      // val end = start + intervalInMin
+      val end = start + intervalInMin - 1 //修正 2015-10-26 14:60:00 不符合 yyyy-MM-dd HH:mm:ss的问题 2015-10-26 14:59:59
+
+/*
+      DEFAULT_sdf_cst_hour.format(date) +
               (if (start < 10) "0" else "") + start +
               (if (end < 10) "0" else "") + end
+*/
+
+      val hourStr = DEFAULT_sdf_cst_hour.format(date)
+
+//      (hourStr + (if (start < 10) "0" else "") + start + "00",
+//              hourStr + (if (end < 10) "0" else "") + end + "00")
+      (hourStr +":" + (if (start < 10) "0" else "") + start + ":00",
+              hourStr +":" + (if (end < 10) "0" else "") + end + ":59")
+
     }
   }
 }

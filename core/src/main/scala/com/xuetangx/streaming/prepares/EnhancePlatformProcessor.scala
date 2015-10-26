@@ -27,20 +27,15 @@ class EnhancePlatformProcessor extends StreamingProcessor {
     val platformKeyName = "platform"
 
     rdd.map(jsonStr=>{
-      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr)
       // json4s 解析json字符串
       val jValue = parse(jsonStr)
 
       //获取agent字段取值
       val agent_old = Utils.strip(compact(jValue \ agentKeyName), "\"") //发现字符串含有引号
-      //        println("= = " * 10 +"E[DEBUG] time_old.length = " + time_old.length +", is startWith(引号)) "+ time_old.startsWith("\"") +", time_old=" + time_old)
 
       val agent_new = get_platform(agent_old)
 
       // 更新agent字段
-//      val jsonStr_adding =  "{\"" + agentKeyName +" \" : \"" + agent_new +"\"}"
-//      val jValue_new = jValue.merge(parse(jsonStr_adding))
-
       val jValue_new  = jValue.transformField{
         case JField(`agentKeyName`, _) => (platformKeyName, JString(agent_new))
       }

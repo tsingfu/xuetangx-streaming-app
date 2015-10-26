@@ -3,6 +3,7 @@ package com.xuetangx.streaming.prepares
 import com.xuetangx.streaming.StreamingProcessor
 import com.xuetangx.streaming.cache.{JdbcPool, JdbcUtils}
 import com.xuetangx.streaming.common.InBatchProcessor
+import com.xuetangx.streaming.util.Utils
 import org.apache.spark.rdd.RDD
 import org.json4s.jackson.JsonMethods._
 
@@ -25,11 +26,11 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
               cacheConfMap: Map[String, String] = null,
               dataSourceConfMap: Map[String, String] = null): RDD[String] = {
 
+/*
     val driver = cacheConfMap("driver").trim
     val url = cacheConfMap("url")
     val username = cacheConfMap("user").trim
     val password = cacheConfMap("password")
-    val tableName = cacheConfMap("tableName")
 
     val maxActive = cacheConfMap.get("maxActive") match {
       case Some(x) if x.nonEmpty => x.toInt
@@ -52,6 +53,9 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
       case Some(x) if x.nonEmpty => x.toInt
       case _ => 10000
     }
+*/
+
+    val tableName = cacheConfMap("tableName")
 
     val batchLimit = cacheConfMap("batchLimit").trim.toInt
 
@@ -64,20 +68,15 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
       Class.forName(classname.trim).newInstance().asInstanceOf[InBatchProcessor]
     })
 
-    //TODO: 考虑到外部缓存 mysql 的查询性能，采用批量查询的方式优化，简化功能，暂支持一个key，同时最好key上有索引
-//    val keyNames = confMap("keyNames").split(",").map(_.trim)
+    //Note: 考虑到外部缓存 mysql 的查询性能，采用批量查询的方式优化，简化功能，暂支持一个key，同时最好key上有索引
     val keyName = cacheConfMap("keyName")
     val selectKeyNames = cacheConfMap.get("cache.keyName.list") match {
       case Some(x) if x.nonEmpty => x
       case _ => "*"
     }
-    val selectClause = "select " + selectKeyNames + " from " + tableName
+    val selectClause = "select " + keyName + ", " + selectKeyNames + " from " + tableName
 
-//    val ds = JdbcUtils.init_dataSource(driver, url, username, password)
-
-//    val ds = JdbcPool.getPool(cacheConfMap("cache.id"))
-
-    rdd.mapPartitions(iter =>{
+    val res = rdd.mapPartitions(iter =>{
 
       val ds = JdbcPool.getPool(cacheConfMap)
 
@@ -94,10 +93,9 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
         private[this] val batchQueryKeyArrayBuffer = ArrayBuffer[String]()
         private[this] var numBatches: Long = 0
 
-        // private[this] val cacheMap = scala.collection.mutable.Map[String, Map[String, String]]()
-
         override def hasNext: Boolean = {
-          (batchPosition != -1 && batchPosition < batchArrayBuffer.length) || (iter.hasNext && fetchNext())
+          val flag = (batchPosition != -1 && batchPosition < batchArrayBuffer.length) || (iter.hasNext && batchNext())
+          flag
         }
 
         override def next(): String = {
@@ -105,7 +103,7 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
           batchResultArrayBuffer(batchPosition - 1)
         }
 
-        def fetchNext(): Boolean = {
+        def batchNext(): Boolean = {
           var result = false
           batchArrayBuffer.clear()
           batchKeyArrayBuffer.clear()
@@ -121,19 +119,10 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
             //  查询时指定范围 id
             val jValue = parse(currentElement)
 
-/*
-            //TODO: 考虑到外部缓存 mysql 的查询性能，采用批量查询的方式优化，简化功能，暂支持一个key，同时最好key上有索引
-            val keyValues = keyName.map(keyName => compact(jValue \ keyName))
-            val whereKeyValues = keyName.zip(keyValues)
-            batchKeyArrayBuffer.append(whereKeyValues)
-            val whereClause = " where " + whereKeyValues.map{case (k,v)=> k +" = '" + v + "'"}.mkString(" and ")
-*/
-            val keyValue = compact(jValue \ keyName).stripPrefix("\"").stripSuffix("\"")
-            // if (cacheMap.contains(keyValue)) batchKeyArrayBuffer.append(keyValue)
-
+            val keyValue = Utils.strip(compact(jValue \ keyName), "\"")
             batchKeyArrayBuffer.append(keyValue)
 
-            //TODO: 外部关联优化
+            // 外部关联优化
             if (cacheQueryConditionEnabled) { //外部关联启用条件查询
               val flagArr = batchProcessorInstances.map(plugin=>{
                 plugin.queryOrNot(jValue, keyValue)
@@ -156,7 +145,7 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
             //TODO: 需要处理单/双引号的情况, 不支持含单引号的情况
             val whereClause =
               if (batchQueryKeyArrayBuffer.nonEmpty) {
-                " where " + keyName + " in " + batchQueryKeyArrayBuffer.mkString("('", "',", "')")
+                " where " + keyName + " in " + batchQueryKeyArrayBuffer.mkString("('", "','", "')")
               } else " where 1 = 0"
 
             //批量查询外部缓存记录到map，
@@ -178,6 +167,9 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
               } else {
                 Map[String, Map[String, String]]()
               }
+//            println("= = " * 20 +"[myapp JdbcCacheBatchQueryProcessor.process] batchQueryKeyArrayBuffer.size = " + batchQueryKeyArrayBuffer.size +", cacheQuerySql = " + cacheQuerySql)
+//            println("= = " * 20 +"[myapp JdbcCacheBatchQueryProcessor.process] batchQueryResult = " +
+//                    batchQueryResult.foreach{case (k, vMap)=> println(k+" -> " * 5 + vMap.mkString("["," ,", "]"))})
 
             // 方案2批量查询获取缓存后，处理本批次内容
             batchResultArrayBuffer = batchArrayBuffer.zip(batchKeyArrayBuffer).map{ case (jsonStr1, key)=>
@@ -197,11 +189,9 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
           result
         }
       }
-
-      iter
     })
 
-    rdd
+    res
   }
 
 }

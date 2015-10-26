@@ -178,7 +178,7 @@ object JdbcUtils {
           errMsg += "\n" + sqle2.getMessage
       } finally {
         try {
-          if (conn != null) conn.commit()
+          if (conn != null) conn.close()
         }
         catch {
           case sqle3: SQLException =>
@@ -219,6 +219,7 @@ object JdbcUtils {
       }
     } catch {
       case ex: Exception =>
+        println("= = " * 20 + "[myapp JDBCUtils.getQueryResultAsMap2 error] exception = " + ex.printStackTrace())
         JdbcUtils.closeQuietly(conn, stmt, rs)
     }
 

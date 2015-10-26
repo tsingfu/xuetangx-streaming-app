@@ -29,7 +29,7 @@ object StreamingReader extends Logging {
                  appConfMap: Map[String, String]): DStream[String] = {
     val sourceType = dataInterfaceConfMap("source.type")
 
-    if ("kafka".equals(sourceType)) {
+    val stream = if ("kafka".equals(sourceType)) {
       val kafkaSimpleConsumerApiUsed = appConfMap.getOrElse("kafka.simple.consumer.api.used", "true").toBoolean
       if(kafkaSimpleConsumerApiUsed){
         val topicsSet = dataInterfaceConfMap(StreamingReader.TOPIC_KEY).split(",").toSet
@@ -60,5 +60,15 @@ object StreamingReader extends Logging {
       throw new Exception("Error: unsupported source.type " + sourceType)
 
     }
+
+    //是否对数据源进行 repartition
+    val stream2 = appConfMap.get("dataInterface.stream.repatition.partitions") match {
+      case Some(x) if x.nonEmpty =>
+        stream.repartition(x.toInt)
+      case _ =>
+        stream
+    }
+
+    stream2
   }
 }

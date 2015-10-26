@@ -247,6 +247,39 @@
                     <value>long</value>
                     <description></description>
                 </property>
+                <property>
+                    <name>add.update.method</name>
+                    <value>getAndUpdate</value>
+                    <description>
+                        可选取值：script, getAndUpdate
+                        默认取值： getAndUpdate
+                    </description>
+                </property>
+                <property>
+                    <name>script.enabled</name>
+                    <value>false</value>
+                    <description>
+                        配置输出统计指标时是否使用了 elasticsearch 的 script 功能
+                    </description>
+                </property>
+                <property>
+                    <name>script.name</name>
+                    <value>realstats_addValue-20151023</value>
+                    <description>
+                        ctx._source.value += p1
+                        配置用于累计更新es的取值脚本的名字(不含扩展名)
+                        脚本需要放在es集群所有的数据节点 config/scripts/脚本名.groovy
+                    </description>
+                </property>
+
+                <!--只支持自定义一个参数名-->
+                <property>
+                    <name>script.param</name>
+                    <value>p1</value>
+                    <description>
+                        根据 update.script.name 脚本中使用的参数名，配置程序使用的参数
+                    </description>
+                </property>
 
             </properties>
         </interface>
@@ -503,7 +536,7 @@
                             <name>statisticKeyMap</name>
                             <!--<value>T1:time_min_1,L1:host,L2:platform,L3.1:origin_referer,L3.2:spam</value>-->
                             <!--<value>L1:uid,L2:platform,L3.1:origin_referer,T1:time_minute_1</value>-->
-                            <value>L1:host,L2:platform,L3.1:origin_referer,L3.2:spam,T1:time_minute_1</value>
+                            <value>L1:host,L2:platform,L3.1:origin_referer,L3.2:spam,T1:start_date,T2:start_date</value>
                             <description>
                                 参考了以前离线计算的配置方式，用于简化统计指标维度(targetKeysList)的配置
                             </description>
@@ -515,19 +548,53 @@
                             <!--<value>L1:T1,L2:T1,L1:L2:T1</value>-->
                             <!--<value>L2:T1</value>-->
                             <!--<value>L2:T1,L3.1:T1</value>-->
-                            <!--TODO: 添加 data_type, value_type -->
-                            <value>L2:T1</value>
-                            <description>各统计指标维度的keys列表</description>
+                            <value>NONE,L2:T2:T3,L3.1:T2:T3#new_account#users#minute1</value>
+                            <description>
+                                各统计指标维度的keys列表(冒号分隔)+"#"+data_type#vale_type#value.cycle
+                                各统计指标维度的keys没有时设置None，
+                                data_type/value_type没有配置时取通用的data_type/value_type
+                            </description>
                         </property>
 
                         <property>
-                            <name>uk.method.label.list</name>
-                            <value>username:countDistinct:users</value>
-                            <!--<value>uid:count:users</value>-->
+                            <name>data.type</name>
+                            <value>create_account</value>
+                            <description>
+                                统计指标默认的指标关联实体标识，如注册用户类
+                            </description>
+                        </property>
+
+                        <property>
+                            <name>value.type</name>
+                            <value>visits</value>
+                            <description>
+                                统计指标默认指标取值含义，访问
+                            </description>
+                        </property>
+                        <property>
+                            <name>value.cycle</name>
+                            <value>minute_1</value>
+                            <description>
+                                统计指标默认的指标关联实体标识，如注册用户类
+                            </description>
+                        </property>
+
+                        <property>
+                            <name>aggegate.key.method.list</name>
+                            <!--<value>username:countDistinct</value>-->
+                            <value>uid:count</value>
                             <description>
                                 uk: count/countDistinct的字段名
                                 method: count/countDistinct/sum 聚合操作的函数名
-                                label: 统计标签类型
+                                label: 统计指标标签类型，
+                            </description>
+                        </property>
+
+                        <property>
+                            <name>statistic.keyLabel.excludes</name>
+                            <value>T2,T3</value>
+                            <description>
+                                定制功能，ESWriter插件类中用于控制输出到ES时，key,keyLevel的取值不含哪些字段名
                             </description>
                         </property>
 
@@ -564,34 +631,7 @@
                 </step>
 
             </computes>
-
-
-            <!--
-                        &lt;!&ndash;输出需要插件类实现
-                        //TODO: 支持多个目的地输出
-                        &ndash;&gt;
-                        <outputs>
-                            <step id="6" type="output" computeId="4" enabled="true">
-                                <properties>
-                                    <property>
-                                        <name>output.class</name>
-                                        <value>com.xuetangx.streaming.output.ConsolePrinter</value>
-                                        <description>
-                                            默认com.xuetangx.streaming.output.ConsolePrinter：输出到日志文件
-                                        </description>
-                                    </property>
-                                    <property>
-                                        <name>output.dataInterfaceId</name>
-                                        <value>3</value>
-                                        <description>
-                                            需要根据output.class指定的插件类配置
-                                        </description>
-                                    </property>
-                                </properties>
-                            </step>
-                        </outputs>
-            -->
-
+            
         </computeStatistic>
 
     </computeStatistics>

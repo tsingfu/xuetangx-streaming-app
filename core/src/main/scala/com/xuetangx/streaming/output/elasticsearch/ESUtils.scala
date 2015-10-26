@@ -10,7 +10,7 @@ import org.elasticsearch.common.transport.InetSocketTransportAddress
  */
 object ESUtils {
   
-  def getClient(confMap: Map[String, String]): Client = {
+  def getClient(confMap: Map[String, String]): Client = synchronized {
     val esClusterName = confMap("cluster.name")
     val esServerPortStrArr = confMap("serverPort.list").split(",").map(_.trim)
 

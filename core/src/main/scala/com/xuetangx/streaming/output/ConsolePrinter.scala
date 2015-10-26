@@ -18,7 +18,7 @@ class ConsolePrinter extends StreamingProcessor {
                       confMap: Map[String, String]) = {
 
     rdd.foreachPartition(iter=>{
-      iter.foreach(line=>println("- - " * 10 + "[myapp ConsolePrinter.output]" + line))
+      iter.foreach(line=>println("= = " * 10 + "[myapp ConsolePrinter.output]" + line))
     })
 
   }
