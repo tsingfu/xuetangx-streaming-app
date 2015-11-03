@@ -1,7 +1,7 @@
 package com.xuetangx.streaming.util
 
-import scala.collection.immutable.Map
 import scala.collection.JavaConversions._
+import scala.collection.immutable.Map
 import scala.xml.NodeSeq
 
 /**
@@ -102,8 +102,6 @@ object Utils {
     //    (outerAttrMap, res.toMap)
     res.toMap
   }
-
-
 
   def strip(str: String, trimStr: String): String ={
     str.stripPrefix(trimStr).stripSuffix(trimStr)

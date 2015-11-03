@@ -1,6 +1,6 @@
 package com.xuetangx.streaming
 
-import com.xuetangx.streaming.util.Utils
+import com.xuetangx.streaming.util.{DateFormatUtils, Utils}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -226,13 +226,13 @@ class StreamingApp extends Serializable with Logging {
           // TODO: 应该先format json，避免 sqlc.jsonRDD(rddJson) 报错
           val df = sqlc.jsonRDD(rddJson)
 
-          println("= = " * 20 + "[myapp] df.schema.length = " + df.schema.length)
-          // MConsolePrinter.output("df.schema.length = " + df.schema.length, "StreamingApp.process", "= = " * 10)
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] df.schema.length = " + df.schema.length)
+          // MConsolePrinter.output("df.schema.length = " + df.schema.length, "StreamingApp.process", "= = " * 8)
 
           val rdd2 =
             if (df.schema.fieldNames.nonEmpty) {
               //没有数据时快速跳过job执行
-              println("= = " * 20 + "[myapp] df.schema.fieldNames.nonEmpty = true ")
+              println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] df.schema.fieldNames.nonEmpty = true ")
               //Note: 准备，分多个步骤
               // 分2类，过滤，增强；
               //  过滤和增强都有2种方式：spark-sql, plugin
@@ -246,14 +246,13 @@ class StreamingApp extends Serializable with Logging {
                 case (id, confMap) =>
                   val phaseStep = "prepares.id[" + confMap("prepares.id") +"]-prepare.id[" + id +"]"
                   logInfo("[myapp] start processing prepares" + preparesActivePropSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
-                  println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] + ", prepares.step.id = " + id)
-                  println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", prepares.step.id = " + id)
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] +", is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", prepares.step.id = " + id)
                   val res = processStep(res_any, res_schema, sqlc,
                     confMap, cachesPropMap, outputInterfacesPropMap,
                     phaseStep)
                   res_any = res._1
                   res_schema = res._2
-                  logInfo("[myapp] finish processing prepares" + preparesActivePropSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
+                  logInfo(DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] finish processing prepares" + preparesActivePropSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
               }
 
               res_any match {
@@ -311,8 +310,8 @@ class StreamingApp extends Serializable with Logging {
                 val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-step.id[" + id + "]"
                 logInfo("[myapp] start processing computeStatistic" + stepsConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
 
-                println("= = " * 20 + "[myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
-                println("= = " * 20 + "[myapp] res_any is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
+                println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
+                println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
                 val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc,
                   confMap, cachesPropMap, outputInterfacesPropMap,
                   phaseStep)
@@ -414,7 +413,7 @@ class StreamingApp extends Serializable with Logging {
 /*
               // TODO: 删除调试信息
               dStream_lastBatch.foreachRDD(rdd_uk=>{
-                rdd_uk.foreach(uk=>println(" =  =" * 20 +"[myapp rdd_uk] " + uk))
+                rdd_uk.foreach(uk=>println(" =  =" * 4 +"[myapp rdd_uk] " + uk))
               })
 */
 
@@ -479,7 +478,7 @@ class StreamingApp extends Serializable with Logging {
               case x: DataFrame => x
             }
 
-            println("= = " * 10 + "[myapp StreamingApp.processStep.prepares] df.schema = " + df.printSchema())
+            println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares] df.schema = " + df.printSchema())
 
             if (df.schema.fieldNames.nonEmpty) {
               val selectExprClause = confMap.getOrElse("selectExprClause", null)
@@ -489,10 +488,10 @@ class StreamingApp extends Serializable with Logging {
               val whereUsed = if (whereClause != null && whereClause.nonEmpty) true else false
 
               //TODO: 删除测试信息
-              println("= = " * 10 +"[myapp StreamingApp.processStep.prepares] selectUsed = "  + selectUsed + ", selectExprClause = " + selectExprClause)
-              println("= = " * 10 +"[myapp StreamingApp.processStep.prepares] whereUsed = "  + whereUsed + ", whereClause = " + whereClause)
+              // println("= = " * 8 +"[myapp StreamingApp.processStep.prepares] selectUsed = "  + selectUsed + ", selectExprClause = " + selectExprClause)
+              // println("= = " * 8 +"[myapp StreamingApp.processStep.prepares] whereUsed = "  + whereUsed + ", whereClause = " + whereClause)
 
-              println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", df = ")
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", df = ")
               df.printSchema()
 //              df.show()
 
@@ -504,18 +503,17 @@ class StreamingApp extends Serializable with Logging {
                 df.filter(whereClause)
               } else df
 
-              println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
               df2.printSchema()
               // df2.show()
               (df2, df2.schema)
             } else { // 空的 DataFrame
-              logInfo("= = " * 10 + "[myapp found empty DataFrame] in stepPhase = " + phaseStep)
+              logInfo("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp found empty DataFrame] in stepPhase = " + phaseStep)
               (df, df.schema)
             }
 
           case "plugin" => //插件类处理后，结构可能变化，
             val plugin = Class.forName(confMap("class")).newInstance().asInstanceOf[StreamingProcessor]
-
 
             //TODO: 如何判断数据为空的情况
             val rdd2 = res_any match {
@@ -523,7 +521,7 @@ class StreamingApp extends Serializable with Logging {
               case x: DataFrame =>
                 plugin.process(x.toJSON, confMap, cachePropMap)
             }
-            println("= = " * 10 + "[myapp data after stepPhase = " + phaseStep +"], rdd.length = " + rdd2.partitions.length)
+            println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], rdd.length = " + rdd2.partitions.length)
             (rdd2, null)
         }
 
@@ -612,8 +610,8 @@ class StreamingApp extends Serializable with Logging {
                         Map[String, String](
                           "origin.statistic.key" -> groupByKeyArr.mkString(","),
                           "origin.statistic.keyLevel" -> keyLevelListStr,
-                          "statistic.key" -> groupByKeyArr2.mkString(","),
-                          "statistic.keyLevel" -> keyLevelList2.mkString(","),
+                          "statistic.key" -> (if (groupByKeyArr2.nonEmpty) groupByKeyArr2.mkString(",") else "NONE"),
+                          "statistic.keyLevel" -> (if (keyLevelList2.nonEmpty) keyLevelList2.mkString(",") else "L0"),
                           "statistic.data_type" -> keyDataType,
                           "statistic.value_type" -> keyValueType,
                           "statistic.cycle" -> valueCycle
@@ -621,22 +619,22 @@ class StreamingApp extends Serializable with Logging {
 
                 val rdd_stat_arr = aggregateKeyMethodList.map { case (key, method) =>
 
-                  println("= = " * 20 + "[myapp  processStep.compute] df.printSchema():" )
+                  println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute] df.printSchema():" )
                   df.printSchema()
                   // df.show()
 
                   val rdd_stat =  method match {
                     case "count" =>
                       //TODO: 删除调试信息
-                      println("= = " * 20 + "[myapp  processStep.compute.count before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
+                      println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute.count before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
 
-                      if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) {
+                      if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) { // groupByKey为 None，取当前批次数据的记录数
                         df.agg(count(key).alias("value")).toJSON
                       } else {
                         df.groupBy(groupByKeyArr(0), groupByKeyArr.drop(1): _*).agg(count(key).alias("value")).toJSON
                       }
                     case "countDistinct" =>
-                      println("= = " * 20 + "[myapp  processStep.compute.countDistinct before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
+                      println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute.countDistinct before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
 
                       if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) {
                         df.agg(countDistinct(key).alias("value")).toJSON

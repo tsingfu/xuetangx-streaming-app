@@ -550,9 +550,9 @@
                             <!--<value>L2:T1,L3.1:T1</value>-->
                             <value>NONE,L2:T2:T3,L3.1:T2:T3#new_account#users#minute1</value>
                             <description>
-                                各统计指标维度的keys列表(冒号分隔)+"#"+data_type#vale_type#value.cycle
+                                各统计指标维度的keys列表(冒号分隔)+"#"+data_type#vale_type#value_cycle
                                 各统计指标维度的keys没有时设置None，
-                                data_type/value_type没有配置时取通用的data_type/value_type
+                                data_type/value_type/value_cycle没有配置时取通用的data_type/value_type/value_cycle
                             </description>
                         </property>
 
