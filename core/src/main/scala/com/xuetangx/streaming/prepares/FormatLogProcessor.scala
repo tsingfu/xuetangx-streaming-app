@@ -21,46 +21,53 @@ class FormatLogProcessor extends StreamingProcessor {
               cacheConfMap: Map[String, String] = null,
               dataSourceConfMap: Map[String, String] = null): RDD[String] = {
 
-    val TIME_KEY = "time"
-    val USERNAME_KEY = "username"
-
-    val EVENT_UID_KEY = "event_uid"
-    val EVENT_UID_KEY1 = "event"
-    val EVENT_UID_KEY2 = "uid"
-
-    val UUID_KEY = "uuid"
-    val EVENT_TYPE_KEY = "event_type"
-    val AGENT_KEY = "agent"
-    val ORIGIN_REFERER_KEY = "origin_referer"
-    val SPAM_KEY = "spam"
-
     val rdd2 = rdd.map(jsonStr=>{
       // json4s 解析json字符串
       try {
         val jValue = parse(jsonStr)
 
         //获取 username, uid, time, uuid,event_type,agent,origin_referer,spam字段
-        val event_uid = Utils.strip(compact(jValue \ EVENT_UID_KEY1 \ EVENT_UID_KEY2), "\"")
-        val time = Utils.strip(compact(jValue \ TIME_KEY), "\"")
 
-        val username = Utils.strip(compact(jValue \ USERNAME_KEY), "\"")
-        val uuid = Utils.strip(compact(jValue \ UUID_KEY), "\"")
-        val event_type = Utils.strip(compact(jValue \ EVENT_TYPE_KEY), "\"")
-        val agent = Utils.strip(compact(jValue \ AGENT_KEY), "\"")
-        val origin_referer = Utils.strip(compact(jValue \ ORIGIN_REFERER_KEY), "\"")
-        val spam = Utils.strip(compact(jValue \ SPAM_KEY), "\"")
+        //TODO: 更新 user_id
+        val event_dict_jValue = jValue \ "event"
+        val event_uid = compact(event_dict_jValue \ "uid")
+        val event_user_id = compact(event_dict_jValue \ "user_id")
+        val event_username = compact(event_dict_jValue \ "username")
+        val event_post_email = compact(event_dict_jValue \ "POST" \ "email")
+        val context_user_id = compact(jValue \ "context" \ "user_id")
 
-        val jsonStr2 = "{\"" + USERNAME_KEY + "\":\"" + username + "\", \"" +
-                EVENT_UID_KEY + "\":\"" + event_uid + "\", \"" +
-                TIME_KEY + "\":\"" + time + "\",\"" +
-                UUID_KEY + "\":\"" + uuid + "\",\"" +
-                EVENT_TYPE_KEY + "\":\"" + event_type + "\",\"" +
-                AGENT_KEY + "\":\"" + agent + "\",\"" +
-                ORIGIN_REFERER_KEY + "\":\"" + origin_referer + "\",\"" +
-                SPAM_KEY + "\":\"" + spam +
+        val user_id_int =
+          try{
+            if (event_uid.nonEmpty && event_uid.toInt > 0) event_uid.toInt else {
+              if (event_user_id.nonEmpty && event_user_id.toInt > 0) event_user_id.toInt else null
+            }
+          } catch {
+            case e: Exception => null
+          }
+
+        val time = Utils.strip(compact(jValue \ "time"), "\"")
+
+        val username = Utils.strip(compact(jValue \ "username"), "\"")
+        val uuid = Utils.strip(compact(jValue \ "uuid"), "\"")
+        val event_type = Utils.strip(compact(jValue \ "event_type"), "\"")
+        val agent = Utils.strip(compact(jValue \ "agent"), "\"")
+        val origin_referer = Utils.strip(compact(jValue \ "origin_referer"), "\"")
+        val spam = Utils.strip(compact(jValue \ "spam"), "\"")
+        val host = Utils.strip(compact(jValue \ "host"), "\"")
+
+        val jsonStr2 = "{\"" +
+                "username" + "\":\"" + username + "\", \"" +
+                "user_id" + "\":" + user_id_int + ", \"" +
+                "time" + "\":\"" + time + "\",\"" +
+                "uuid" + "\":\"" + uuid + "\",\"" +
+                "event_type" + "\":\"" + event_type + "\",\"" +
+                "agent" + "\":\"" + agent + "\",\"" +
+                "origin_referer" + "\":\"" + origin_referer + "\",\"" +
+                "spam" + "\":\"" + spam +
+                "host" + "\":\"" + host +
                 "\"}"
 
-        //      println("= = " * 20 + "[myapp FilterRegisterProcessor.process ] jsonStr2 = " + jsonStr2)
+        //println("= = " * 10 + "[myapp FilterRegisterProcessor.process ] jsonStr2 = " + jsonStr2)
         Some(jsonStr2)
 
       } catch {
@@ -73,6 +80,4 @@ class FormatLogProcessor extends StreamingProcessor {
       case Some(jsonStr) => jsonStr
     }
   }
-
-  
 }

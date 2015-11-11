@@ -6,7 +6,7 @@ import java.util.TimeZone
 import com.xuetangx.streaming.StreamingProcessor
 import com.xuetangx.streaming.util.Utils
 import org.apache.spark.rdd.RDD
-import org.json4s.JsonAST.JField
+import org.json4s.JsonDSL._
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
@@ -26,53 +26,64 @@ class EnhanceTimeProcessor extends StreamingProcessor {
                        cacheConfMap: Map[String, String] = null,
                        dataSourceConfMap: Map[String, String] = null): RDD[String] = {
 
-    val timeKey = confMap("timeKeyName")
-//    val timeKeyAdd = confMap("add.timeKeyName.list")
-    val timeIntervalMinutesList = confMap("add.timeKeyInterval.minutes.list")
-
-//    val timeKeyIntervalList = timeKeyAdd.split(",").map(_.trim).zip(timeIntervalMinutesList.split(",").map(_.trim.toInt))
+    val timeKey = confMap("timeKeyName") //日志中时间字段名
+    val timeIntervalMinutesList = confMap("add.timeKeyInterval.minutes.list")  //时间区间间隔
+    val timeKeyPrefix = confMap("add.timeKey.prefix")  //新增时间属性名前缀
 
     rdd.map(jsonStr=>{
-//      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr)
       // json4s 解析json字符串
       val jValue = parse(jsonStr)
 
       //获取时间字段取值
-      val time_old = Utils.strip(compact(jValue \ timeKey),"\"") //发现字符串含有引号
-      //        println("= = " * 10 +"E[DEBUG] time_old.length = " + time_old.length +", is startWith(引号)) "+ time_old.startsWith("\"") +", time_old=" + time_old)
+      val time = Utils.strip(compact(jValue \ timeKey),"\"") //发现字符串首尾含有引号，去掉
+      //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr + ", time = " + time)
+      val cstTimeStr = get_cst_time(time)
 
-      val cstTimeStr = get_cst_time(time_old)
+      val res =
+        if (cstTimeStr == null || cstTimeStr.isEmpty) { //时间不符合规则，过滤
+          println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] found invalid cstTimeStr, time = " + time)
+          None
+        } else {
 
-      // 使用指定格式更新时间字段取值，要求：
-      // 1统一日志为北京时区时间，如果时间格式不对，置"";
-      var jValue_new = jValue transformField {
-        case JField(`timeKey`, _) => (timeKey, JString(cstTimeStr))
-      }
+          val fieldMap = scala.collection.mutable.Map[String, String]()
+          // 使用指定格式更新时间字段取值，要求：
+          // 1统一日志为北京时区时间，如果时间格式不对，置"";
+          //          var jValue_new = jValue transformField {
+          //            case JField(`timeKey`, _) => (timeKey, JString(cstTimeStr))
+          //          }
 
-      // 2新增统计指标时间粒度 start_date, end_date
-//      println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeKeyIntervalList.mkString("[", ",", "]")
-//              +", timeKey = " + timeKey +", timeKeyAdd " + timeKeyAdd +", timeIntervalMinutesList = " + timeIntervalMinutesList)
-//      timeKeyIntervalList.foreach{case (timeKeyName, timekeyInterval) =>
-      timeIntervalMinutesList.split(",").map(_.trim.toInt).foreach{case timekeyInterval =>
-        // val addedTimeValue = get_timeKey(cstTimeStr, timekeyInterval)
-        val (start_date_str, end_date_str) = get_timeKey(cstTimeStr, timekeyInterval)
+          fieldMap.put(timeKey, cstTimeStr)
 
-//        val start_date = DEFAULT_sdf_cst_second.parse(start_date_str)
-//        val end_date = DEFAULT_sdf_cst_second.parse(end_date_str)
+          // 2新增统计指标时间粒度 start_date, end_date
+          //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeIntervalMinutesList.mkString("[", ",", "]") + ", timeKey = " + timeKey + ", timeIntervalMinutesList = " + timeIntervalMinutesList)
+          timeIntervalMinutesList.split(",").map(_.trim).foreach { case timekeyInterval =>
+            val (start_date_str, end_date_str) = get_timeKey(cstTimeStr, timekeyInterval.toInt)
+            //        val jsonStr_adding = "{\"" + timeKeyPrefix + timekeyInterval + "_start\": \"" + start_date_str +"\"" +
+            //                ", \"" + timeKeyPrefix + timekeyInterval + "_end\": \"" + end_date_str + "\"}"
+            //        jValue_new = jValue_new.merge(parse(jsonStr_adding))
+            //        println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
 
-        //val jsonStr_adding =  "{\" start_date\": \"" + addedTimeValue +"\"}"
-        val jsonStr_adding =  "{\"start_date\": \"" + start_date_str +"\", \"end_date\": \"" + end_date_str + "\"}"
-        jValue_new = jValue_new.merge(parse(jsonStr_adding))
-        println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
-      }
-      jValue_new
-    }).filter(jValue => {
-      // json4s 解析json字符串
-      //val jValue = parse(jsonStr)
-      val timeValue = Utils.strip(compact(jValue \ timeKey), "\"")
-      timeValue.nonEmpty
-    }).map(jValue => compact(jValue))
+            fieldMap.put(timeKeyPrefix + timekeyInterval + "_start", start_date_str)
+            fieldMap.put(timeKeyPrefix + timekeyInterval + "_end", end_date_str)
+          }
 
+          // val jValue_new = jValue.merge(render(fieldMap)) // 问题：merge后，jValue_new 丢失其他属性
+          // val jValue_new = jValue.merge(render(fieldMap.toMap))  // 提示 required： org.json4s.JValue
+          val json_add_map = fieldMap.toMap
+          val jValue_new = jValue.merge(render(json_add_map))
+          //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + json_add_map.mkString("[", ",", "]") + ", jValue_new = " + compact(jValue_new))
+          Some(jValue_new)
+        }
+      res
+    }).collect {
+      case Some(jValue) => compact(jValue)
+    }
+//            .filter(jValue => {
+//      // json4s 解析json字符串
+//      //val jValue = parse(jsonStr)
+//      val timeValue = Utils.strip(compact(jValue \ timeKey), "\"")
+//      timeValue.nonEmpty
+//    }).map(jValue => compact(jValue))
   }
 
 
@@ -89,13 +100,6 @@ class EnhanceTimeProcessor extends StreamingProcessor {
     var minStr: String = null
     var timezoneIDStr = "GMT+0800"
     val DEFAULT_TimeZoneID = "GMT+0800"
-
-    //    timeStr match {
-    //      case timePattern(d, t, microseonds, sign, h, m) =>
-    //        println("= = " * 10 +"E[DEBUG] " + d + ", " + t +", " + microseonds +", " + sign +", " + h + ", " + m)
-    //      case _ =>
-    //        println("WARNING: found invalid time = " + timeStr)
-    //    }
 
     val formatStr = timeStr match {
       case timePattern(d, t, microseonds, sign, h, m) =>
@@ -127,17 +131,21 @@ class EnhanceTimeProcessor extends StreamingProcessor {
         null
     }
     //    println("formatStr = " + formatStr +", datetimePattern = " + datetimePattern)
-    val cstTimeStr = if (formatStr == null) ""
-    else {
-      val sdf = new SimpleDateFormat(datetimePattern)
-      sdf.setTimeZone(TimeZone.getTimeZone(timezoneIDStr))
-      sdf.applyPattern(datetimePattern)
-      val date = sdf.parse(formatStr)
-      //      println("date = " + date)
-      sdf.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
-      sdf.format(date)
-    }
-    //    formatStr
+    val cstTimeStr =
+      if (formatStr == null) ""
+      else {
+        try {
+          val sdf = new SimpleDateFormat(datetimePattern)
+          sdf.setTimeZone(TimeZone.getTimeZone(timezoneIDStr))
+          sdf.applyPattern(datetimePattern)
+          val date = sdf.parse(formatStr)
+          // println("date = " + date)
+          sdf.setTimeZone(TimeZone.getTimeZone(DEFAULT_TimeZoneID))
+          sdf.format(date)
+        } catch {
+          case ex: Exception => ""
+        }
+      }
     cstTimeStr
   }
 
@@ -159,7 +167,8 @@ class EnhanceTimeProcessor extends StreamingProcessor {
    * @return
    */
   def get_timeKey(timeStr: String, intervalInMin: Int): (String, String) = {
-    if (timeStr == null || timeStr.isEmpty) return ("", "")
+    if (timeStr == null || timeStr.isEmpty)
+      ("", "")
     else {
       val date = DEFAULT_sdf_cst.parse(timeStr)
       val minutes = date.getMinutes

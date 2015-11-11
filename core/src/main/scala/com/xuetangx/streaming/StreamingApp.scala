@@ -2,9 +2,10 @@ package com.xuetangx.streaming
 
 import com.xuetangx.streaming.util.{DateFormatUtils, Utils}
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, SQLContext}
+import org.apache.spark.sql.functions._
+
 import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
@@ -33,7 +34,7 @@ object StreamingApp {
 //    val monitor = Class.forName("com.xuetangx.streaming.monitor.MConsolePrinter").newInstance()
 
     // 应用的配置
-    val appsPropMap = Utils.parseProperties2Map(conf\ "apps", "app", "app.id")
+    val appsPropMap = Utils.parseProperties2Map(conf \ "apps", "app", "app.id")
     val interfaceId = appsPropMap(appId)("app.interfaceId") //获取输入接口id
 
     // 数据源的配置
@@ -42,9 +43,9 @@ object StreamingApp {
     // 数据接口的配置，分2类： input, output
     val dataInterfacesPropMap = Utils.parseProperties2Map(conf \ "dataInterfaces", "interface", "interface.id")
     // 输出接口的配置
-    val outputDataInterfacesPropMap = dataInterfacesPropMap.filter{case (id, mapConf) => mapConf("interface.type") == "output"}
-    val outputInterfacesPropMap = outputDataInterfacesPropMap.map{case (id, mapConf) => 
-      (id, mapConf ++ dataSourcesPropMap(dataInterfacesPropMap(id)("interface.sourceId")))
+    val dataInterfacesPropMap_output = dataInterfacesPropMap.filter{case (id, confMap) => confMap("interface.type") == "output"}
+    val outputInterfacesPropMap = dataInterfacesPropMap_output.map{case (id, confMap) =>
+      (id, confMap ++ dataSourcesPropMap(dataInterfacesPropMap(id)("interface.sourceId")))
     }
 
     // 外部缓存的配置
@@ -57,18 +58,19 @@ object StreamingApp {
     val inputInterfacePropMap = dataInterfacesPropMap(interfaceId) ++
             dataSourcesPropMap(dataInterfacesPropMap(interfaceId)("interface.sourceId"))
 
-    // 准备阶段配置
+    // 指定的输入数据接口关联的准备阶段配置
     val preparesConf = (conf \ "prepares").filter(_.attribute("interfaceId").get.text==interfaceId)
     //    val (preparesCommonPropMap, preparesPropMap) = parseProperties2Map(preparesConf, "prepare", "id") //报错
     val preparesPropMap = Utils.parseProperties2Map(preparesConf, "step", "step.id")
 
     // 指定的计算阶段配置
     val computeStatisticsConf = (conf \ "computeStatistics").filter(node=>{
-      //      node.attribute("interfaceId")==interfaceId
+      // node.attribute("interfaceId")==interfaceId
       node.attribute("interfaceId").get.text==interfaceId
     })
 
     // 指定数据接口id计算统计指标的计算配置(计算统计指标的数据集id->是否启用->指定id的配置)
+    //   Seq[(computeStatistic.id, computeStatistic配置)], 其中 computeStatistic 配置=> Seq(step.id-> step配置) ，其中 step 配置=> Map[k, v]
     val computesConfTuple = for (computeStatisticConf <- computeStatisticsConf \ "computeStatistic") yield {
       val outerAttrMap = computeStatisticConf.attributes.asAttrMap
       //      (outerAttrMap, parseProperties2Map(computeStatisticConf, "step", "step.id"))
@@ -81,17 +83,59 @@ object StreamingApp {
     }
 
     // 准备阶段配置中有效步骤的配置
-    val preparesActivePropSeq = preparesPropMap.filter{case (k, v)=>
-      v.getOrElse("prepare.enabled", "false") == "true"
+    val preparesPropSeq_active = preparesPropMap.filter{case (k, v)=>
+      //v.getOrElse("prepare.enabled", "false") == "true"
+      v.getOrElse("step.enabled", "false") == "true"
     }.toSeq.sortWith(_._1 < _._1)
 
     // 指定数据接口id有效的计算配置
-    val computesActiveConfTupleSeq = computesConfTuple.filter(_._2=="true").map(kxv=>{
-      val (key, flag, outerMap) = kxv
+    // 将计算阶段配置中准备和计算区分开
+    // compute_preparesConfTuple2: Seq[(computeStatistic.id, computeStatistic.enabled, compute_preparesConfMap)]
+    //  其中 compute_preparesConfMap： Map[step.id, Map[String, String]]]
+    val compute_preparesConfTuple = for (computeStatisticConf <- computeStatisticsConf \ "computeStatistic") yield {
+      val outerAttrMap = computeStatisticConf.attributes.asAttrMap  // Map(computeStatistic.id->x, computeStatistic.enabled->y)
+      //      (outerAttrMap, parseProperties2Map(computeStatisticConf, "step", "step.id"))
+      val compute_preparesConfMap = Utils.parseProperties2Map(computeStatisticConf \ "prepares", "step", "step.id").map{case (k, vMap)=>
+        (k, vMap ++ outerAttrMap.map{case (outKey, v) => (computeStatisticConf.head.label+"."+outKey, v)})
+      }
 
-      val filteredStepsMap = outerMap.filter{case (k, vMap)=>vMap.getOrElse("step.enabled", "false")=="true"}
-      (key, filteredStepsMap.toSeq.sortWith(_._1 < _._1))
-    }).sortWith(_._1 < _._1)
+      println("=  = " * 20)
+      println(outerAttrMap.mkString("[", ",", "]"))
+      (outerAttrMap("id"), outerAttrMap("enabled"), compute_preparesConfMap)
+    }
+
+    // compute_computesConfTuple2: Seq[(computeStatistic.id, computeStatistic.enabled, computesConfMap)]
+    //  其中 computesConfMap： Map[step.id, Map[String, String]
+    val compute_computesConfTuple = for (computeStatisticConf <- computeStatisticsConf \ "computeStatistic") yield {
+      val outerAttrMap = computeStatisticConf.attributes.asAttrMap
+
+      val compute_computesConfMap = Utils.parseProperties2Map(computeStatisticConf \ "computes", "step", "step.id").map{case (k, vMap)=>
+        (k, vMap ++ outerAttrMap.map{case (outKey, v) => (computeStatisticConf.head.label+"."+outKey, v)})
+      }
+
+      println("=  = " * 20)
+      println(outerAttrMap.mkString("[", ",", "]"))
+
+      // (computeStatistic.id, computeStatistic.enabled, computesConfMap)
+      (outerAttrMap("id"), outerAttrMap("enabled"), compute_computesConfMap)
+    }
+
+    // 指定数据接口id有效的计算配置
+    val compute_preparesConfMap_active = compute_preparesConfTuple.filter(_._2=="true").map(kxv=>{
+      val (computeStatisticId, flag, stepConfMap) = kxv
+
+      val filteredStepsMap = stepConfMap.filter{case (k, vMap)=>vMap.getOrElse("step.enabled", "false")=="true"}
+      (computeStatisticId, filteredStepsMap.toSeq.sortWith(_._1 < _._1))
+    }).toMap
+    // .sortWith(_._1 < _._1)
+
+    val compute_computesConfMap_active = compute_computesConfTuple.filter(_._2=="true").map(kxv=>{
+      val (computeStatisticId, flag, stepConfMap) = kxv
+
+      val filteredStepsMap = stepConfMap.filter{case (k, vMap)=>vMap.getOrElse("step.enabled", "false")=="true"}
+      (computeStatisticId, filteredStepsMap.toSeq.sortWith(_._1 < _._1))
+    }).toMap
+    // .sortWith(_._1 < _._1)
 
 
     // 初始化
@@ -113,6 +157,13 @@ object StreamingApp {
       case _ =>
     }
 
+    appsPropMap(appId).get("spark.streaming.concurrentJobs") match {
+      case Some(x) if x.nonEmpty => sparkConf.set("spark.streaming.concurrentJobs", x.trim)
+      case _ =>
+    }
+
+
+
 
     val sc = new SparkContext(sparkConf)
     appsPropMap(appId).get("checkpointDir") match {
@@ -121,8 +172,8 @@ object StreamingApp {
     }
 
     //TODO: 校验配置
-    val appConf = new AppConf()
-    appConf.init(confFileXml, appId)
+//    val appConf = new AppConf()
+//    appConf.init(confFileXml, appId)
 
     val batchDurationSeconds = appsPropMap(appId)("batchDuration.seconds").toInt
     val ssc = new StreamingContext(sc, Seconds(batchDurationSeconds))
@@ -162,7 +213,10 @@ object StreamingApp {
     instance.process(stream, ssc, sqlc, 
       inputInterfacePropMap, outputInterfacesPropMap,
       cachesPropMap,
-      preparesActivePropSeq, computesActiveConfTupleSeq)
+      preparesPropSeq_active,
+      //computesConfTupleSeq_active,
+      compute_preparesConfMap_active, compute_computesConfMap_active
+    )
 
     ssc.start()
     ssc.awaitTermination()
@@ -189,18 +243,23 @@ class StreamingApp extends Serializable with Logging {
               inputInterfaceConfMap: Map[String, String],
               outputInterfacesPropMap: Map[String, Map[String, String]],
               cachesPropMap: Map[String, Map[String, String]],
-              preparesActivePropSeq: Seq[(String, Map[String, String])],
-              computesActiveConfTupleSeq: Seq[(String, Seq[(String, Map[String, String])])]): Unit = {
+              preparesPropSeq_active: Seq[(String, Map[String, String])],
+              compute_preparesConfMap_active: Map[String, Seq[(String, Map[String, String])]],
+              compute_computesConfMap_active: Map[String, Seq[(String, Map[String, String])]]): Unit = {
 
     // 初始化批次排重数据结构
     val batchDeduplicateQueueRDDsMap = mutable.Map[String, mutable.Queue[RDD[String]]]()
 
-    val batchDeduplicateConfSeq = computesActiveConfTupleSeq.map{case (k1, stepConfSeq) => {
-      val hasBatchDeduplicateStep = stepConfSeq.map{case (k2, stepConf) => {
-        if (stepConf("step.type") == "batchDeduplicate") "true" else "false"
-      }}.contains("true")
-      (k1, hasBatchDeduplicateStep)
-    }}.filter(_._2)
+    // Seq[(computeStatistic.id, computeStatistic配置)] 进行指标统计的
+    // 其中 computeStatistic 配置=> Seq(step.id-> step配置) ，其中 step 配置=> Map[k, v]
+    // batchDeduplicateConfSeq = Seq[(computeStatistic.id, 是否进行相邻批次排重)]
+    val batchDeduplicateConfSeq = compute_preparesConfMap_active.map{case (computeStatisticId, stepConfSeq) =>
+      val hasBatchDeduplicateStep =  //指定 computeStatisticId 是否含有 true
+        stepConfSeq.map { case (stepId, stepConf) =>
+          if (stepConf("step.type") == "batchDeduplicate") "true" else "false"
+        }.contains("true")
+      (computeStatisticId, hasBatchDeduplicateStep)
+    }.filter(x => x._2)
 
     batchDeduplicateConfSeq.map(_._1).foreach(id=>{
       batchDeduplicateQueueRDDsMap.put(id, new mutable.Queue[RDD[String]]())
@@ -212,18 +271,17 @@ class StreamingApp extends Serializable with Logging {
     val dStream2 =
       if (inputInterfaceConfMap("type") == "json") dStream
       else {
-        //TODO: 支持非json形式的日志处理，转换为json形式的日志
-        throw new Exception("Error: unsupport to analyze non-json type log")
+        // 约定后续处理要求数据流格式为 json 形式字符串，必须在配置文件中显示配置确认
+        throw new Exception("Error: format.class of configuration in dataInterfaces is subclass of StreamingFormater, should return format of json string!!!")
       }
 
     // Note: dStream_after_prepares 中的 rdd 是json形式
     val dStream_after_prepares =
-      if (preparesActivePropSeq.isEmpty) { //准备阶段没有配置步骤
+      if (preparesPropSeq_active.isEmpty) { //准备阶段没有配置步骤
         dStream2
       } else { //准备阶段配置了执行步骤
 
         dStream2.transform(rddJson => {
-          // TODO: 应该先format json，避免 sqlc.jsonRDD(rddJson) 报错
           val df = sqlc.jsonRDD(rddJson)
 
           println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] df.schema.length = " + df.schema.length)
@@ -242,17 +300,18 @@ class StreamingApp extends Serializable with Logging {
               var res_schema: StructType = df.schema
 
               // 遍历准备阶段准备步骤
-              preparesActivePropSeq.foreach {
+              preparesPropSeq_active.foreach {
                 case (id, confMap) =>
                   val phaseStep = "prepares.id[" + confMap("prepares.id") +"]-prepare.id[" + id +"]"
-                  logInfo("[myapp] start processing prepares" + preparesActivePropSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing prepares" + preparesPropSeq_active.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
                   println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] +", is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", prepares.step.id = " + id)
+
                   val res = processStep(res_any, res_schema, sqlc,
                     confMap, cachesPropMap, outputInterfacesPropMap,
                     phaseStep)
                   res_any = res._1
                   res_schema = res._2
-                  logInfo(DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] finish processing prepares" + preparesActivePropSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] finish processing prepares" + preparesPropSeq_active.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
               }
 
               res_any match {
@@ -270,7 +329,8 @@ class StreamingApp extends Serializable with Logging {
     //Note: 循环流程： 准备(过滤->增强)->批次排重+计算->输出
     //  过滤2(依赖增强1的属性)
     //  增强2(在过滤2的基础上)
-    if(computesActiveConfTupleSeq.isEmpty) { //配置中没有配置有效的计算，不需要触发job
+//    if(computesActiveConfTupleSeq.isEmpty) { //配置中没有配置有效的计算，不需要触发job
+    if(compute_preparesConfMap_active.isEmpty && compute_computesConfMap_active.isEmpty) { //配置中没有配置有效的计算，不需要触发job
 /*
       dStream_after_prepares.foreachRDD(rddJson => {
         logWarning("[myapp configuration] found no active computeStatistic in computeStatistics part")
@@ -278,68 +338,72 @@ class StreamingApp extends Serializable with Logging {
         rddJson.filter(line => false)
       })
 */
-
     } else { //存在有效的计算配置
       //TODO: 测试内存缓存
       dStream_after_prepares.persist()
 
       // 每个有效的 computeStatistic 对应一个过滤条件
-      val id2streams = computesActiveConfTupleSeq.map {
-        case (computeStatisticId, stepsConfSeq) =>
+//      val id2streams = computesActiveConfTupleSeq.map {
+      val id2streams =
+        compute_preparesConfMap_active.map { case (computeStatisticId, stepsConfSeq) =>
           //Note: 每个 computeStatisticId 对应一些过滤条件，
           //   应该有各自的 res_any_in_computeStatistic, res_schema_in_computeStatistic, 初始化可以是准备阶段的值,
           //   但是问题是定义时不在 DStream.transform中执行，有问题，所以初始化为null
           // 输入：dStream_after_prepares
           // 输出：
 
-          logInfo("[myapp] start processing computeStatistics " + stepsConfSeq.map(_._1).mkString("[", ",", "]") + " in computeStatisticId " + computeStatisticId)
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing computeStatistics " + stepsConfSeq.map(_._1).mkString("[", ",", "]") + " in computeStatisticId " + computeStatisticId)
 
           // 处理计算阶段流程，准备步骤 - 1先处理filter 和 enhance
-          val preparesStepsConfSeq = stepsConfSeq.filterNot {
-            case (id, confMap) => confMap("step.type") == "compute" || confMap("step.type") == "batchDeduplicate"
-          }
+//          val computePreparesStepsConfSeq = stepsConfSeq.filterNot {
+//            case (id, confMap) => confMap("step.type") == "compute" || confMap("step.type") == "batchDeduplicate"
+//          }
+          val computePreparesStepsConfSeq = stepsConfSeq.filter{case (stepId, stepConfMap) => stepConfMap("step.type") != "batchDeduplicate"}
 
           // 计算每个有效统计指标集合——先执行准备步骤，再计算，最后输出
-          val dStream3 = dStream_after_prepares.transform(rddJson => {
-            var res_any_in_computeStatistic: Any = rddJson
-            var res_schema_in_computeStatistic: StructType = null
+          val dStream3 =
+            dStream_after_prepares.transform(rddJson => {
+              var res_any_in_computeStatistic: Any = rddJson
+              var res_schema_in_computeStatistic: StructType = null
 
-            // 遍历计算阶段准备步骤
-            preparesStepsConfSeq.foreach {
-              case (id, confMap) =>
-                val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-step.id[" + id + "]"
-                logInfo("[myapp] start processing computeStatistic" + stepsConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
+              // 遍历计算阶段准备步骤
+              computePreparesStepsConfSeq.foreach {
+                case (id, confMap) =>
+                  val phaseStep = "computeStatistic.id[" + computeStatisticId + "]-prepares.step.id[" + id + "]"
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
 
-                println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
-                println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", computeStatistic.step.id = " + id + ", computeStatisticId = " + computeStatisticId)
-                val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc,
-                  confMap, cachesPropMap, outputInterfacesPropMap,
-                  phaseStep)
-                res_any_in_computeStatistic = res._1
-                res_schema_in_computeStatistic = res._2
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", phaseStep " + phaseStep)
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", phaseStep " + phaseStep)
+                  val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc,
+                    confMap, cachesPropMap, outputInterfacesPropMap,
+                    phaseStep)
+                  res_any_in_computeStatistic = res._1
+                  res_schema_in_computeStatistic = res._2
 
-                logInfo("[myapp] finish processing computeStatistic" + stepsConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
-            }
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing phaseStep " + phaseStep)
+              }
 
-            res_any_in_computeStatistic match {
-              case x: RDD[String] => x
-              case x: DataFrame => x.toJSON
-            }
+              res_any_in_computeStatistic match {
+                case x: RDD[String] => x
+                case x: DataFrame => x.toJSON
+              }
           })
           (computeStatisticId, dStream3)
       }
 
       // 处理计算阶段流程，计算步骤 - 3 批次去重 + 计算统计指标
-      id2streams.par.foreach{
+      id2streams.foreach {
+      //id2streams.par.foreach {
         case (computeStatisticId, stream) =>
 
-          val computesStepConfSeq = computesActiveConfTupleSeq.toMap.get(computeStatisticId).get.filter { case (id, confMap) => confMap("step.type") == "compute" }
-          val batchDeduplicateStepConfSeq = computesActiveConfTupleSeq.toMap.get(computeStatisticId).get.filter { case (id, confMap) => confMap("step.type") == "batchDeduplicate" }
+          // val computesStepConfSeq = computesActiveConfTupleSeq.toMap.get(computeStatisticId).get.filter { case (id, confMap) => confMap("step.type") == "compute" }
+          // val batchDeduplicateStepConfSeq = computesActiveConfTupleSeq.toMap.get(computeStatisticId).get.filter { case (id, confMap) => confMap("step.type") == "batchDeduplicate" }
+          val computesStepConfSeq = compute_computesConfMap_active.get(computeStatisticId).get
+          val batchDeduplicateStepConfSeq = compute_preparesConfMap_active.get(computeStatisticId).get.filter { case (id, confMap) => confMap("step.type") == "batchDeduplicate" }
 
           if (computesStepConfSeq.isEmpty) { //配置中没有配置有效的计算统计指标，不需要触发job
             stream.foreachRDD(rddJson => {
-              logWarning("[myapp configuration] found no active computeStatistic.computes in computeStatistics part")
-              // rddJson.filter(line => false).count()
+              println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [Warning myapp configuration] StreamingApp.process.compute found no active computeStatistic.computes in computeStatistics part")
               rddJson
             })
           } else { //存在有效的计算配置
@@ -349,22 +413,33 @@ class StreamingApp extends Serializable with Logging {
 
               // stream： DStream[String]
               stream.foreachRDD(rddJson => {
-                
-                computesStepConfSeq.foreach {
-                  case (id, confMap) =>
-                    val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-step.id[" + id + "]"
-                    logInfo("[myapp] start processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
+                //rddJson.persist()  // 问题： java.lang.UnsupportedOperationException: Cannot change storage level of an RDD after it was already assigned a level
+                //Note: 多少个 computeStatistic ，多少个 rdd.count() job
+                val rddCount = rddJson.count()
 
-                    // compute 步骤输出的结果是 每个 computeStatistic.computes的结果
-                    val res = processStep(rddJson, null, sqlc,
-                      confMap, cachesPropMap, outputInterfacesPropMap,
-                      phaseStep)
+                if (rddCount == 0) { //Note: 如果不做判断，空数据时报错， minBy
+                  println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process.computes found empty rdd in computeStatisticId = " + computeStatisticId +", rddCount = " + rddCount)
+                } else {
+                  computesStepConfSeq.foreach {
+                  //computesStepConfSeq.par.foreach {
+                    case (id, confMap) =>
+                      val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-computes.step.id[" + id + "]"
+                      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
 
-                    logInfo("[myapp] finish processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
+                      // compute 步骤输出的结果是 每个 computeStatistic.computes的结果
+                      val res = processStep(rddJson, null, sqlc,
+                        confMap, cachesPropMap, outputInterfacesPropMap,
+                        phaseStep)
+
+                      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing phaseStep " + phaseStep)
+                  }
                 }
+
+                //rddJson.unpersist()
               })
 
             } else { //配置了批次排重，先执行批次排重，再执行计算统计指标
+              //TODO: 处理空数据时 如果不做判断 报错， minBy
               val queueRDDs = batchDeduplicateQueueRDDsMap(computeStatisticId)
 
               val dStream_lastBatch = ssc.queueStream(queueRDDs, oneAtATime = true)
@@ -401,7 +476,6 @@ class StreamingApp extends Serializable with Logging {
 
                   } else {
                     rddJson.map(x=>(x, x))
-//                    sqlc.sparkContext.parallelize(Array[(String,String)](), 1)
                   }
                 rdd2
               })
@@ -418,7 +492,7 @@ class StreamingApp extends Serializable with Logging {
 */
 
               stream3.foreachRDD(rddWithUkJsonUk=>{
-//              stream3.foreachRDD(rddWithUkJsonUk=>{
+
                 //获取当前批次中用于批次排重的key
                 val rdd_uk = rddWithUkJsonUk.map(_._1).distinct()
 
@@ -428,26 +502,27 @@ class StreamingApp extends Serializable with Logging {
 
                 //批次排重
                 val rdd2 = rddWithUkJsonUk.filter(_._2._2 == None).map(_._2._1)
+
                 if (rdd2.partitions.nonEmpty) {
                   // 计算统计指标
                   computesStepConfSeq.foreach {
                     case (id, confMap) =>
-                      val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-step.id[" + id + "]"
+                      val phaseStep = "computeStatistic.id[" + computeStatisticId +"]-computes.step.id[" + id + "]"
 
-                      logInfo("[myapp] start processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
+                      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep + " with config = " + confMap.mkString("[", ",", "]"))
 
                       // compute 步骤输出的结果是 每个 computeStatistic.computes的结果
                       val res = processStep(rdd2, res_schema_in_computeStatistic2, sqlc,
                         confMap, cachesPropMap, outputInterfacesPropMap,
                         phaseStep)
 
-                      logInfo("[myapp] finish processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
+                      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing computeStatistic.computes" + computesStepConfSeq.map(_._1).mkString("[", ",", "]") + ", phaseStep " + phaseStep)
                   }
                 }
               })
             }
           }
-          logInfo("[myapp] finish processing computeStatistics in computeStatisticId " + computeStatisticId)
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing computeStatistics in computeStatisticId " + computeStatisticId)
       }
     }
   }
@@ -459,10 +534,10 @@ class StreamingApp extends Serializable with Logging {
                   cachesPropMap: Map[String, Map[String, String]] = null,
                   outputInterfacesPropMap: Map[String, Map[String, String]] = null,
                   phaseStep: String = null): (Any, StructType) = {
-    
-    logInfo("[myapp] processStep start preocessing phaseStep = " + phaseStep)
+
     val stepType = confMap("step.type")
     val stepMethod = confMap("step.method")
+    println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.processStep."+ stepType +" start preocessing phaseStep = " + phaseStep)
     val cachePropMap = confMap.get("cacheId") match {
       case Some(x) if x.nonEmpty => cachesPropMap(x)
       case _ => null
@@ -487,41 +562,38 @@ class StreamingApp extends Serializable with Logging {
               val selectUsed = if (selectExprClause != null && selectExprClause.nonEmpty) true else false
               val whereUsed = if (whereClause != null && whereClause.nonEmpty) true else false
 
-              //TODO: 删除测试信息
-              // println("= = " * 8 +"[myapp StreamingApp.processStep.prepares] selectUsed = "  + selectUsed + ", selectExprClause = " + selectExprClause)
-              // println("= = " * 8 +"[myapp StreamingApp.processStep.prepares] whereUsed = "  + whereUsed + ", whereClause = " + whereClause)
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", df = ")
+              //df.printSchema()
+              //df.show()
 
-              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], df.rdd.length = " + df.rdd.partitions.length + ", df = ")
-              df.printSchema()
-//              df.show()
+              val df2 =
+                if (selectUsed && whereUsed) {
+                  df.selectExpr(selectExprClause.split(","): _*).filter(whereClause)
+                } else if (selectUsed && (!whereUsed)) {
+                  df.selectExpr(selectExprClause.split(","): _*)
+                } else if ((!selectUsed) && whereUsed) {
+                  df.filter(whereClause)
+                } else df
 
-              val df2 = if (selectUsed && whereUsed){
-                df.selectExpr(selectExprClause.split(","): _*).filter(whereClause)
-              } else if (selectUsed && (! whereUsed)) {
-                df.selectExpr(selectExprClause.split(","): _*)
-              } else if ((! selectUsed) && whereUsed) {
-                df.filter(whereClause)
-              } else df
-
-              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares data after stepPhase = " + phaseStep +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
               df2.printSchema()
-              // df2.show()
+              //df2.show()
+              // TODO: 测试 schmea
               (df2, df2.schema)
             } else { // 空的 DataFrame
-              logInfo("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp found empty DataFrame] in stepPhase = " + phaseStep)
+              print("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares found empty DataFrame] in stepPhase = " + phaseStep)
               (df, df.schema)
             }
 
           case "plugin" => //插件类处理后，结构可能变化，
             val plugin = Class.forName(confMap("class")).newInstance().asInstanceOf[StreamingProcessor]
 
-            //TODO: 如何判断数据为空的情况
             val rdd2 = res_any match {
               case x: RDD[String] => plugin.process(x, confMap, cachePropMap)
               case x: DataFrame =>
                 plugin.process(x.toJSON, confMap, cachePropMap)
             }
-            println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp data after stepPhase = " + phaseStep +"], rdd.length = " + rdd2.partitions.length)
+            println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares data after stepPhase = " + phaseStep +"], rdd2.partitions.length = " + rdd2.partitions.length)
             (rdd2, null)
         }
 
@@ -531,139 +603,179 @@ class StreamingApp extends Serializable with Logging {
         stepMethod match {
           case "spark-sql" => //spark-sql计算统计指标
             val df = res_any match {
-              case x: RDD[String] => sqlc.jsonRDD(x, res_schema)
+              case x: RDD[String] =>
+                println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] stepPhase = " + phaseStep + ", res_schema null or not = " + (res_schema == null))
+                sqlc.jsonRDD(x, res_schema)
               case x: DataFrame => x
             }
 
-            if(df.schema.fieldNames.nonEmpty) {
-              df.persist()
-              //为统计指标设置lebels，便于配置中引用
-              val statisticKeyMap = confMap("statisticKeyMap").split(",").map(kvs => {
-                val kv = kvs.trim.split(":")
-                assert(kv.length == 2)
-                (kv(0), kv(1))
-              }).toMap
+            df.persist()
+            println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data before stepPhase = " + phaseStep +", df.rdd.length = " + df.rdd.partitions.length + ", df = ")
+            df.printSchema()
+            //df.show()
 
-              //设置各个统计指标的统计维度
-              val STATSTIC_KEYS_INFO_KEY = "targetKeysList"
-              val targetKeysList = confMap(STATSTIC_KEYS_INFO_KEY)
+            if (df.schema.fieldNames.nonEmpty) {
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data before stepPhase = " + phaseStep +", df.schema.fieldNames.length = " + df.schema.fieldNames.length)
 
-              //TODO: 更新 uk.method.label.list 配置方式
-              val aggregateKeyMethodList = confMap("aggegate.key.method.list").split(",").map(ukMethodLabel => {
-                val keyMethodLabelArr = ukMethodLabel.trim.split(":")
-                assert(keyMethodLabelArr.length >= 2)
-                (keyMethodLabelArr(0), keyMethodLabelArr(1))
-              })
+              val selectExprClause = confMap.getOrElse("selectExprClause", null)
+              val whereClause = confMap.getOrElse("whereClause", null)
 
-              val DEFAULT_GROUPBY_NONE_VALUE = "NONE"
-              val GROUPBY_NONE_VALUE = confMap.get("groupby.none.key") match {
-                case Some(x) if x.nonEmpty => x
-                case _ => DEFAULT_GROUPBY_NONE_VALUE
-              }
-              
-              //初始化输出类插件
-              val outputClzStr = confMap.getOrElse("output.class", "com.xuetangx.streaming.output.ConsolePrinter")
+              val selectUsed = if (selectExprClause != null && selectExprClause.nonEmpty) true else false
+              val whereUsed = if (whereClause != null && whereClause.nonEmpty) true else false
 
-              val outputConfMap =
-                if (outputClzStr == "com.xuetangx.streaming.output.ConsolePrinter") {
-                  Map[String, String]()
-                } else {
-                  outputInterfacesPropMap(confMap("output.dataInterfaceId"))
-                }
-              val plugin = Class.forName(outputClzStr).newInstance().asInstanceOf[StreamingProcessor]
-              logInfo("[myapp processStep.compute ] output result of statistics")
+              val df2 =
+                if (selectUsed && whereUsed) {
+                  df.selectExpr(selectExprClause.split(","): _*).filter(whereClause)
+                } else if (selectUsed && (!whereUsed)) {
+                  df.selectExpr(selectExprClause.split(","): _*)
+                } else if ((!selectUsed) && whereUsed) {
+                  df.filter(whereClause)
+                } else df
 
-              for (targetKeys <- targetKeysList.split(",")) {
+              if (selectUsed || whereUsed) df2.persist()
 
-                val DUMMY_SPLIT_PLACEHOLDER = "DUMMY_SPLIT_PLACEHOLDER"
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute data after select and where, stepPhase = " + phaseStep +"], df2.schema.fieldNames.length = " + df2.schema.fieldNames.length + ", df2 = ")
+              df2.printSchema()
+              //df2.show()
 
-                val keyDtypeVtypeArr = (targetKeys + "#" + DUMMY_SPLIT_PLACEHOLDER).split("#").dropRight(1).map(_.trim)
-                val keyLevelListStr = keyDtypeVtypeArr(0)
-                val groupByKeyArr = keyLevelListStr.split(":").map(k=>{
-                  if (k == DEFAULT_GROUPBY_NONE_VALUE) GROUPBY_NONE_VALUE else statisticKeyMap(k)
+              if(df2.schema.fieldNames.nonEmpty) {
+
+                //为统计指标设置lebels，便于配置中引用
+                val statisticKeyMap = confMap("statisticKeyMap").split(",").map(kvs => {
+                  val kv = kvs.trim.split(":")
+                  assert(kv.length == 2)
+                  (kv(0), kv(1))
+                }).toMap
+
+                //设置各个统计指标的统计维度
+                val STATSTIC_KEYS_INFO_KEY = "targetKeysList"
+                val targetKeysList = confMap(STATSTIC_KEYS_INFO_KEY)
+
+                val aggregateKeyMethodList = confMap("aggegate.key.method.list").split(",").map(ukMethodLabel => {
+                  val keyMethodLabelArr = ukMethodLabel.trim.split(":")
+                  assert(keyMethodLabelArr.length >= 2)
+                  (keyMethodLabelArr(0), keyMethodLabelArr(1))
                 })
 
-                val staticKeyLabelExcludes = confMap.get("statistic.keyLabel.excludes") match {
-                  case Some(x) if x.nonEmpty => x.split(",").map(_.trim)
-                  case _ => Array[String]()
+                val DEFAULT_GROUPBY_NONE_VALUE = "NONE"
+                val GROUPBY_NONE_VALUE = confMap.get("groupby.none.key") match {
+                  case Some(x) if x.nonEmpty => x
+                  case _ => DEFAULT_GROUPBY_NONE_VALUE
                 }
 
-                val keyLevelList2 = if (staticKeyLabelExcludes.nonEmpty) {
-                  keyDtypeVtypeArr(0).split(":").map(_.trim).filter(! staticKeyLabelExcludes.contains(_))
-                } else {
-                  keyDtypeVtypeArr(0).split(":").map(_.trim)
-                }
-                val groupByKeyArr2 = keyLevelList2.map(k=>{
-                  if (k == DEFAULT_GROUPBY_NONE_VALUE) GROUPBY_NONE_VALUE else statisticKeyMap(k)
-                })
+                //初始化输出类插件
+                val outputClzStr = confMap.getOrElse("output.class", "com.xuetangx.streaming.output.ConsolePrinter")
 
-                val keyDataType = if (keyDtypeVtypeArr.length == 1) confMap("data.type") else keyDtypeVtypeArr(1)
-                val keyValueType = if (keyDtypeVtypeArr.length == 3) keyDtypeVtypeArr(2) else confMap("value.type")
-                val valueCycle = if (keyDtypeVtypeArr.length == 4) keyDtypeVtypeArr(3) else confMap("value.cycle")
+                val outputConfMap =
+                  if (outputClzStr == "com.xuetangx.streaming.output.ConsolePrinter") {
+                    Map[String, String]()
+                  } else {
+                    outputInterfacesPropMap(confMap("output.dataInterfaceId"))
+                  }
+                val plugin = Class.forName(outputClzStr).newInstance().asInstanceOf[StreamingProcessor]
 
-                assert(keyDataType.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", data.type of " + keyLevelListStr +" is empty")
-                assert(keyValueType.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", value.type of " + keyLevelListStr +" is empty")
-                assert(valueCycle.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", value.cycle of " + keyLevelListStr +" is empty")
+                println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  StreamingApp.processStep.compute ] begin computing with targetKeysList = " + targetKeysList)
 
-                // pre_output 需要的配置信息: 统计指标维度，data_type(指标关联实体标识), value_type(指标取值含义)
-                val preOutputConfMap = outputConfMap ++
-                        Map[String, String](
-                          "origin.statistic.key" -> groupByKeyArr.mkString(","),
-                          "origin.statistic.keyLevel" -> keyLevelListStr,
-                          "statistic.key" -> (if (groupByKeyArr2.nonEmpty) groupByKeyArr2.mkString(",") else "NONE"),
-                          "statistic.keyLevel" -> (if (keyLevelList2.nonEmpty) keyLevelList2.mkString(",") else "L0"),
-                          "statistic.data_type" -> keyDataType,
-                          "statistic.value_type" -> keyValueType,
-                          "statistic.cycle" -> valueCycle
-                        )
+                for (targetKeys <- targetKeysList.split(",")) {
 
-                val rdd_stat_arr = aggregateKeyMethodList.map { case (key, method) =>
+                  println("= = " * 10 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  StreamingApp.processStep.compute ] begin computing with targetKeys = " + targetKeys)
 
-                  println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute] df.printSchema():" )
-                  df.printSchema()
-                  // df.show()
+                  val DUMMY_SPLIT_PLACEHOLDER = "DUMMY_SPLIT_PLACEHOLDER"
 
-                  val rdd_stat =  method match {
-                    case "count" =>
-                      //TODO: 删除调试信息
-                      println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute.count before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
+                  val keyDtypeVtypeArr = (targetKeys + "#" + DUMMY_SPLIT_PLACEHOLDER).split("#").dropRight(1).map(_.trim)
+                  val keyLevelListStr = keyDtypeVtypeArr(0)
+                  val groupByKeyArr = keyLevelListStr.split(":").map(k=>{
+                    if (k == DEFAULT_GROUPBY_NONE_VALUE) GROUPBY_NONE_VALUE else statisticKeyMap(k)
+                  })
 
-                      if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) { // groupByKey为 None，取当前批次数据的记录数
-                        df.agg(count(key).alias("value")).toJSON
-                      } else {
-                        df.groupBy(groupByKeyArr(0), groupByKeyArr.drop(1): _*).agg(count(key).alias("value")).toJSON
-                      }
-                    case "countDistinct" =>
-                      println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp  processStep.compute.countDistinct before union] df.rdd.partitions.length = " + df.rdd.partitions.length)
-
-                      if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) {
-                        df.agg(countDistinct(key).alias("value")).toJSON
-                      } else {
-                        df.groupBy(groupByKeyArr(0), groupByKeyArr.drop(1): _*).agg(countDistinct(key).alias("value")).toJSON
-                      }
+                  val staticKeyLabelExcludes = confMap.get("statistic.keyLabel.excludes") match {
+                    case Some(x) if x.nonEmpty => x.split(",").map(_.trim)
+                    case _ => Array[String]()
                   }
 
-                  //增加 data_type, value_type 等信息到统计指标的json中，是否放在 output插件类中（放到插件类需要一些配置）
-                  plugin.pre_output(rdd_stat, preOutputConfMap)
+                  val keyLevelList2 =
+                    if (staticKeyLabelExcludes.nonEmpty) {
+                      keyDtypeVtypeArr(0).split(":").map(_.trim).filter(!staticKeyLabelExcludes.contains(_))
+                    } else {
+                      keyDtypeVtypeArr(0).split(":").map(_.trim)
+                    }
+                  val groupByKeyArr2 =
+                    keyLevelList2.map(k => {
+                      if (k == DEFAULT_GROUPBY_NONE_VALUE) GROUPBY_NONE_VALUE else statisticKeyMap(k)
+                    })
+
+                  val keyDataType = if (keyDtypeVtypeArr.length == 1) confMap("data.type") else keyDtypeVtypeArr(1)
+                  val keyValueType = if (keyDtypeVtypeArr.length == 3) keyDtypeVtypeArr(2) else confMap("value.type")
+                  val valueCycle = if (keyDtypeVtypeArr.length == 4) keyDtypeVtypeArr(3) else confMap("value.cycle")
+
+                  assert(keyDataType.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", data.type of " + keyLevelListStr +" is empty")
+                  assert(keyValueType.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", value.type of " + keyLevelListStr +" is empty")
+                  assert(valueCycle.nonEmpty, "invalid configuration in " + STATSTIC_KEYS_INFO_KEY + ", value.cycle of " + keyLevelListStr +" is empty")
+
+                  // pre_output 需要的配置信息: 统计指标维度，data_type(指标关联实体标识), value_type(指标取值含义)
+                  val preOutputConfMap = outputConfMap ++
+                          Map[String, String](
+                            "origin.statistic.key" -> groupByKeyArr.mkString(","),
+                            "origin.statistic.keyLevel" -> keyLevelListStr,
+                            "statistic.key" -> (if (keyLevelList2.nonEmpty) keyLevelList2.mkString(",") else "L0"),
+                            "statistic.keyName" -> (if (groupByKeyArr2.nonEmpty) groupByKeyArr2.mkString(",") else "NONE"),
+                            "statistic.data_type" -> keyDataType,
+                            "statistic.value_type" -> keyValueType,
+                            "statistic.cycle" -> valueCycle
+                          )
+
+                  val rdd_stat_arr = aggregateKeyMethodList.map { case (key, method) =>
+
+                    println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] using spark sql dataframe, df2.printSchema():" )
+                    //df2.printSchema()
+                    //df2.show()
+
+                    val rdd_stat =  method match {
+                      case "count" =>
+                        //println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute using count before union] df2.rdd.partitions.length = " + df2.rdd.partitions.length + ", groupByKeyArr = " + groupByKeyArr.mkString("[", ",", "]"))
+
+                        if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) { // groupByKey为 None，取当前批次数据的记录数
+                          df2.agg(count(key).alias("value")).toJSON
+                        } else {
+                          df2.groupBy(groupByKeyArr(0), groupByKeyArr.drop(1): _*).agg(count(key).alias("value")).toJSON
+                        }
+                      case "countDistinct" =>
+                        println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute using countDistinct before union] df2.rdd.partitions.length = " + df2.rdd.partitions.length + ", groupByKeyArr = " + groupByKeyArr.mkString("[", ",", "]"))
+
+                        if(groupByKeyArr(0) == GROUPBY_NONE_VALUE) {
+                          df2.agg(countDistinct(key).alias("value")).toJSON
+                        } else {
+                          df2.groupBy(groupByKeyArr(0), groupByKeyArr.drop(1): _*).agg(countDistinct(key).alias("value")).toJSON
+                        }
+                    }
+
+                    //println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] after compute , groupByKeyArr = " + groupByKeyArr.mkString("[", ",", "]") +", rdd_stat = " )
+
+                    //增加 data_type, value_type 等信息到统计指标的json中，是否放在 output插件类中（放到插件类需要一些配置）
+                    plugin.pre_output(rdd_stat, preOutputConfMap)
+                  }
+
+                  val rdd_stat_union =  rdd_stat_arr.reduce(_ union _)
+
+                  //触发job的action操作
+                  // Note: union 统计结果的 rdd，可以减少 job 的数量，增加 partition 数量，增加任务并行
+                  plugin.output(rdd_stat_union, preOutputConfMap)
                 }
 
-                val rdd_stat_union =  rdd_stat_arr.reduce(_ union _)
-
-                //触发job的action操作
-                // Note: union 统计结果的 rdd，可以减少 job 的数量，增加 partition 数量，增加任务并行
-                plugin.output(rdd_stat_union, preOutputConfMap)
+                if (selectUsed || whereUsed) df2.unpersist()
+              } else {
+                println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute ] found empty dataFrame after phaseStep = " + phaseStep)
               }
 
-              df.unpersist()
             } else {
-              logInfo("[myapp processStep.compute ] found empty dataFrame before compute phaseStep = " + phaseStep)
+              println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] found empty dataFrame before compute phaseStep = " + phaseStep)
             }
 
+            df.unpersist()
           case "plugin" => //插件类计算统计指标
             //TODO: 支持插件类方式计算统计指标
 
             val plugin = Class.forName(confMap("class")).newInstance().asInstanceOf[StreamingProcessor]
-
             val rdd_stat = res_any match {
               case x: RDD[String] => plugin.compute(x, confMap)
               case x: DataFrame =>
@@ -688,7 +800,7 @@ class StreamingApp extends Serializable with Logging {
             throw new Exception("does not support to compute statics using plugin class")
         }
 
-        logInfo("[myapp] processStep finished preocessing phaseStep = " + phaseStep)
+        println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.processStep finished preocessing phaseStep = " + phaseStep)
 
         //Note: compute不返回统计指标结果
         (null, null)

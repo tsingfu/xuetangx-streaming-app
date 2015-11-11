@@ -9,7 +9,7 @@ object JdbcPool {
 
   val tomcatJdbcPoolMap = scala.collection.mutable.Map[String, DataSource]()
 
-  def getPool(cacheConfMap: Map[String, String]): DataSource ={
+  def getPool(cacheConfMap: Map[String, String]): DataSource = synchronized {
 
     val poolId = cacheConfMap("cache.id")
     val jdbcPool = tomcatJdbcPoolMap.getOrElseUpdate(poolId, {

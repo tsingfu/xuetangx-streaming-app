@@ -26,39 +26,11 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
               cacheConfMap: Map[String, String] = null,
               dataSourceConfMap: Map[String, String] = null): RDD[String] = {
 
-/*
-    val driver = cacheConfMap("driver").trim
-    val url = cacheConfMap("url")
-    val username = cacheConfMap("user").trim
-    val password = cacheConfMap("password")
-
-    val maxActive = cacheConfMap.get("maxActive") match {
-      case Some(x) if x.nonEmpty => x.toInt
-      case _ => 100
-    }
-    val initialSize = cacheConfMap.get("initialSize") match {
-      case Some(x) if x.nonEmpty => x.toInt
-      case _ => 10
-    }
-    val maxIdle = cacheConfMap.get("maxIdle") match {
-      case Some(x) if x.nonEmpty => x.toInt
-      case _ => 100
-    }
-    val minIdle = cacheConfMap.get("minIdle") match {
-      case Some(x) if x.nonEmpty => x.toInt
-      case _ => 10
-    }
-
-    val maxWait = cacheConfMap.get("maxWait") match {
-      case Some(x) if x.nonEmpty => x.toInt
-      case _ => 10000
-    }
-*/
-
     val tableName = cacheConfMap("tableName")
 
     val batchLimit = cacheConfMap("batchLimit").trim.toInt
 
+    // 外部关联优化，是否启用条件关联，根据 插件类的 queryOrNot 方法判断
     val cacheQueryConditionEnabled = (cacheConfMap.get("cache.query.condition.enabled") match {
       case Some(x) if x == "true" => "true"
       case _ => "false"
@@ -76,7 +48,7 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
     }
     val selectClause = "select " + keyName + ", " + selectKeyNames + " from " + tableName
 
-    val res = rdd.mapPartitions(iter =>{
+    val rdd2 = rdd.mapPartitions(iter =>{
 
       val ds = JdbcPool.getPool(cacheConfMap)
 
@@ -93,6 +65,8 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
         private[this] val batchQueryKeyArrayBuffer = ArrayBuffer[String]()
         private[this] var numBatches: Long = 0
 
+        private[this] val batchQueryKeyDeDuplicateSet = scala.collection.mutable.Set[String]()
+
         override def hasNext: Boolean = {
           val flag = (batchPosition != -1 && batchPosition < batchArrayBuffer.length) || (iter.hasNext && batchNext())
           flag
@@ -108,6 +82,8 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
           batchArrayBuffer.clear()
           batchKeyArrayBuffer.clear()
 
+          batchQueryKeyDeDuplicateSet.clear()
+
           var batchSize: Int = 0
           //记录批次处理的数据
           while (iter.hasNext && (batchSize < batchLimit)) {
@@ -122,17 +98,26 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
             val keyValue = Utils.strip(compact(jValue \ keyName), "\"")
             batchKeyArrayBuffer.append(keyValue)
 
-            // 外部关联优化
-            if (cacheQueryConditionEnabled) { //外部关联启用条件查询
-              val flagArr = batchProcessorInstances.map(plugin=>{
-                plugin.queryOrNot(jValue, keyValue)
-              })
-              if(flagArr.exists(flag => flag)) { //有存在true的情况，就添加到 batchQueryKeyArrayBuffer
-                batchQueryKeyArrayBuffer.append(keyValue)
+            // 外部关联优化: 1 如果 key 为空，不关联; 2 如果 不为空，根据插件类内部的优化规则选择
+            if (keyValue.nonEmpty) {
+
+              val duplicate_in_batch_flag = batchQueryKeyDeDuplicateSet.add(keyValue)
+
+              if (duplicate_in_batch_flag) { //关联key能插入批次集合，批次内不重复，需要查询
+                if (cacheQueryConditionEnabled) { //外部关联启用条件查询
+                val flagArr = batchProcessorInstances.map(plugin=>{
+                    plugin.queryOrNot(jValue, keyValue)
+                  })
+                  if(flagArr.exists(flag => flag)) { //有存在true的情况，就添加到 batchQueryKeyArrayBuffer
+                    batchQueryKeyArrayBuffer.append(keyValue)
+                  }
+                } else { //如果不启用条件查询
+                  batchQueryKeyArrayBuffer.append(keyValue)
+                }
               }
-            } else { //如果不启用条件查询
-              batchQueryKeyArrayBuffer.append(keyValue)
+              // else {  //关联key不能插入批次集合，批次内重复，不需要重复查询 }
             }
+
 
             batchSize += 1
             currentPosition += 1
@@ -185,13 +170,11 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
 
           batchSize = 0
           batchPosition = 0
-
           result
         }
       }
     })
-
-    res
+    rdd2
   }
 
 }

@@ -69,6 +69,14 @@ object StreamingReader extends Logging {
         stream
     }
 
-    stream2
+    //是否对数据源进行格式化
+    val stream3 = dataInterfaceConfMap.get("format.class") match {
+      case Some(x) if x.nonEmpty =>
+        val formater = Class.forName(x).newInstance().asInstanceOf[StreamingFormater]
+        formater.format(stream2)
+      case _ => stream2
+    }
+
+    stream3
   }
 }

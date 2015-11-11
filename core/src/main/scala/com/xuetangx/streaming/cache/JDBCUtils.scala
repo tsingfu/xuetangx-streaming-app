@@ -221,6 +221,8 @@ object JdbcUtils {
       case ex: Exception =>
         println("= = " * 20 + "[myapp JDBCUtils.getQueryResultAsMap2 error] exception = " + ex.printStackTrace())
         JdbcUtils.closeQuietly(conn, stmt, rs)
+    } finally {
+      JdbcUtils.closeQuietly(conn, stmt, rs)
     }
 
     resultKey2RecordMap.toMap

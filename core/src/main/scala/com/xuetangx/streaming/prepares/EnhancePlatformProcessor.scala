@@ -8,10 +8,13 @@ import org.json4s.jackson.JsonMethods._
 
 /**
  * Created by tsingfu on 15/10/15.
+ * Note: 放到 PlatformLogFormater 中
  */
+@deprecated
 class EnhancePlatformProcessor extends StreamingProcessor {
 
   /**处理过滤和属性增强(取值更新，增减字段等)
+    * Note: 能够从日志直接转换，推荐最开始的日志格式化插件
     *
     * @param rdd
     * @param confMap
