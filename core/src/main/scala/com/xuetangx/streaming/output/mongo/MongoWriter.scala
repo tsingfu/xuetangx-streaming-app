@@ -9,6 +9,7 @@ import org.apache.spark.rdd.RDD
 class MongoWriter extends StreamingProcessor {
 
   /**输出统计指标到mongodb
+    * 需要重写
     *
     * @param rdd
     * @param confMap
@@ -16,7 +17,7 @@ class MongoWriter extends StreamingProcessor {
   override def output(rdd: RDD[String],
                       confMap: Map[String, String]) = {
 
-
+    rdd
   }
 
 }

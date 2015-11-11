@@ -17,8 +17,22 @@ class ConsolePrinter extends StreamingProcessor {
   override def output(rdd: RDD[String],
                       confMap: Map[String, String]) = {
 
+/*
     rdd.foreachPartition(iter=>{
       iter.foreach(line=>println("= = " * 10 + "[myapp ConsolePrinter.output]" + line))
+    })
+*/
+
+    rdd.mapPartitions(iter=>{
+      new Iterator[String] {
+        override def hasNext: Boolean = iter.hasNext
+
+        override def next(): String = {
+          val line = iter.next()
+          println("= = " * 10 + "[myapp ConsolePrinter.output]" + line)
+          line
+        }
+      }
     })
 
   }

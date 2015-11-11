@@ -37,8 +37,8 @@ class StreamingProcessor extends Serializable with Logging {
    * @param confMap
    */
   def output(rdd: RDD[String],
-             confMap: Map[String, String]) = {
-
+             confMap: Map[String, String]): RDD[String] = {
+    rdd
   }
 
 
