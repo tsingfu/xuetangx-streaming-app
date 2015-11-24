@@ -18,6 +18,7 @@ object MongoConnectionManager {
   // id = mongoUrlStr
   val mongoClientMap = scala.collection.mutable.Map[String, MongoClient]()
 
+  //TODO: 存在内存不释放的问题
   // id = mongoUrlStr#mongoDb#collection
   val mongoCollectionMap = scala.collection.mutable.Map[String, MongoCollection[Document]]()
 

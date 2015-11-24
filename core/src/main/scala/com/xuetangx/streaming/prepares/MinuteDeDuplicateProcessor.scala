@@ -1,13 +1,9 @@
 package com.xuetangx.streaming.prepares
 
-import com.xuetangx.streaming.common.DeDuplicateProcessor
-import com.xuetangx.streaming.util.Utils
-import org.json4s._
-import org.json4s.jackson.JsonMethods._
-
 /**
  * Created by tsingfu on 15/11/6.
  */
+/*
 class MinuteDeDuplicateProcessor  extends DeDuplicateProcessor {
 
   /**
@@ -25,3 +21,4 @@ class MinuteDeDuplicateProcessor  extends DeDuplicateProcessor {
     prefix + deDuplicateTimeValue2.substring(0, 13)
   }
 }
+*/

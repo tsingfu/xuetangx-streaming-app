@@ -95,7 +95,7 @@ object Utils {
       val values = props \ "value"
       val nameValueSeq = names.map(_.text).zip(values.map(_.text)) ++ innerAttrMap ++ outerAttrMap
       val propsMap = (for (nameValue<- nameValueSeq) yield (nameValue._1, nameValue._2)).toMap
-      println(propsMap.mkString("[", ",", "]"))
+      // println(propsMap.mkString("[", ",", "]"))
       (propsMap(keyName), propsMap)
     }
     //    (res.toMap, outerAttrMap)
@@ -107,4 +107,25 @@ object Utils {
     str.stripPrefix(trimStr).stripSuffix(trimStr)
   }
 
+
+
+  /**
+   * Returns a human-readable string representing a duration such as "35ms"
+   */
+  def msDurationToString(ms: Long): String = {
+    val second = 1000
+    val minute = 60 * second
+    val hour = 60 * minute
+
+    ms match {
+      case t if t < second =>
+        "%d ms".format(t)
+      case t if t < minute =>
+        "%.1f s".format(t.toFloat / second)
+      case t if t < hour =>
+        "%.1f m".format(t.toFloat / minute)
+      case t =>
+        "%.2f h".format(t.toFloat / hour)
+    }
+  }
 }
