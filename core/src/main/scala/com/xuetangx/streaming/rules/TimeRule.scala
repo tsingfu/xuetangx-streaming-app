@@ -1,31 +1,29 @@
-package com.xuetangx.streaming.prepares
+package com.xuetangx.streaming.rules
 
 import java.text.SimpleDateFormat
 import java.util.TimeZone
 
-import com.xuetangx.streaming.StreamingProcessor
+import com.xuetangx.streaming.StreamingRDDRule
 import com.xuetangx.streaming.util.Utils
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.json4s.JsonDSL._
-import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
 /**
- * Created by tsingfu on 15/10/9.
+ * Created by tsingfu on 15/11/29.
  */
-class EnhanceTimeProcessor extends StreamingProcessor {
+class TimeRule extends StreamingRDDRule {
 
   /**处理过滤和属性增强(取值更新，增减字段等)
     *
     * @param rdd
-    * @param confMap
     * @return
     */
-  override def process(rdd: RDD[String],
-                       confMap: Map[String, String],
-                       cacheConfMap: Map[String, String] = null,
-                       cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null): RDD[String] = {
+  override def process(rdd: RDD[String]): RDD[String] = {
+
+    val confMap = this.conf
+    // val cacheConfMap = this.cacheConf
+    // val cache_broadcast = this.cache_broadcast
 
     val timeKey = confMap("timeKeyName") //日志中时间字段名
     val timeIntervalMinutesList = confMap("add.timeKeyInterval.minutes.list")  //时间区间间隔
@@ -37,12 +35,13 @@ class EnhanceTimeProcessor extends StreamingProcessor {
 
       //获取时间字段取值
       val time = Utils.strip(compact(jValue \ timeKey),"\"") //发现字符串首尾含有引号，去掉
-      //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process]" + jsonStr + ", time = " + time)
+      //println("= = " * 10 + "[myapp TimeRule.process]" + jsonStr + ", time = " + time)
       val cstTimeStr = get_cst_time(time)
 
       val res =
         if (cstTimeStr == null || cstTimeStr.isEmpty) { //时间不符合规则，过滤
-          println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] found invalid cstTimeStr, time = " + time)
+          //TODO: 删除测试
+          //println("= = " * 10 + "[myapp TimeRule.process] found invalid cstTimeStr, time = " + time)
           None
         } else {
 
@@ -56,14 +55,9 @@ class EnhanceTimeProcessor extends StreamingProcessor {
           fieldMap.put(timeKey, cstTimeStr)
 
           // 2新增统计指标时间粒度 start_date, end_date
-          //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] timeKeyIntervalList = " + timeIntervalMinutesList.mkString("[", ",", "]") + ", timeKey = " + timeKey + ", timeIntervalMinutesList = " + timeIntervalMinutesList)
+          //println("= = " * 10 + "[myapp TimeRule.process] timeKeyIntervalList = " + timeIntervalMinutesList.mkString("[", ",", "]") + ", timeKey = " + timeKey + ", timeIntervalMinutesList = " + timeIntervalMinutesList)
           timeIntervalMinutesList.split(",").map(_.trim).foreach { case timekeyInterval =>
             val (start_date_str, end_date_str) = get_timeKey(cstTimeStr, timekeyInterval.toInt)
-            //        val jsonStr_adding = "{\"" + timeKeyPrefix + timekeyInterval + "_start\": \"" + start_date_str +"\"" +
-            //                ", \"" + timeKeyPrefix + timekeyInterval + "_end\": \"" + end_date_str + "\"}"
-            //        jValue_new = jValue_new.merge(parse(jsonStr_adding))
-            //        println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + jsonStr_adding +", jValue_new = " + compact(jValue_new))
-
             fieldMap.put(timeKeyPrefix + timekeyInterval + "_start", start_date_str)
             fieldMap.put(timeKeyPrefix + timekeyInterval + "_end", end_date_str)
           }
@@ -72,19 +66,14 @@ class EnhanceTimeProcessor extends StreamingProcessor {
           // val jValue_new = jValue.merge(render(fieldMap.toMap))  // 提示 required： org.json4s.JValue
           val json_add_map = fieldMap.toMap
           val jValue_new = jValue.merge(render(json_add_map))
-          //println("= = " * 10 + "[myapp EnhanceTimeProcessor.process] jsonStr_adding = " + json_add_map.mkString("[", ",", "]") + ", jValue_new = " + compact(jValue_new))
+          //println("= = " * 10 + "[myapp TimeRule.process] user_id = " + Utils.strip(compact(jValue \ "user_id"),"\"") +
+          //        ", jsonStr_adding = " + json_add_map.mkString("[", ",", "]"))
           Some(jValue_new)
         }
       res
     }).collect {
       case Some(jValue) => compact(jValue)
     }
-//            .filter(jValue => {
-//      // json4s 解析json字符串
-//      //val jValue = parse(jsonStr)
-//      val timeValue = Utils.strip(compact(jValue \ timeKey), "\"")
-//      timeValue.nonEmpty
-//    }).map(jValue => compact(jValue))
   }
 
 
@@ -177,16 +166,16 @@ class EnhanceTimeProcessor extends StreamingProcessor {
       // val end = start + intervalInMin
       val end = start + intervalInMin - 1 //修正 2015-10-26 14:60:00 不符合 yyyy-MM-dd HH:mm:ss的问题 2015-10-26 14:59:59
 
-/*
-      DEFAULT_sdf_cst_hour.format(date) +
-              (if (start < 10) "0" else "") + start +
-              (if (end < 10) "0" else "") + end
-*/
+      /*
+            DEFAULT_sdf_cst_hour.format(date) +
+                    (if (start < 10) "0" else "") + start +
+                    (if (end < 10) "0" else "") + end
+      */
 
       val hourStr = DEFAULT_sdf_cst_hour.format(date)
 
-//      (hourStr + (if (start < 10) "0" else "") + start + "00",
-//              hourStr + (if (end < 10) "0" else "") + end + "00")
+      //      (hourStr + (if (start < 10) "0" else "") + start + "00",
+      //              hourStr + (if (end < 10) "0" else "") + end + "00")
       (hourStr +":" + (if (start < 10) "0" else "") + start + ":00",
               hourStr +":" + (if (end < 10) "0" else "") + end + ":59")
 

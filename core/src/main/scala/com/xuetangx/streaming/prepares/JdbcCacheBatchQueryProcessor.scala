@@ -4,6 +4,7 @@ import com.xuetangx.streaming.StreamingProcessor
 import com.xuetangx.streaming.cache.{JdbcPool, JdbcUtils}
 import com.xuetangx.streaming.common.InBatchProcessor
 import com.xuetangx.streaming.util.Utils
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.json4s.jackson.JsonMethods._
 
@@ -24,7 +25,7 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
   override def process(rdd: RDD[String],
               confMap: Map[String, String],
               cacheConfMap: Map[String, String] = null,
-              dataSourceConfMap: Map[String, String] = null): RDD[String] = {
+              cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null): RDD[String] = {
 
     val tableName = cacheConfMap("tableName")
 
@@ -36,6 +37,7 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
       case _ => "false"
     }).toBoolean
 
+    //TODO: 优化点：不需要每次 job 都 new 一个实例
     val batchProcessorInstances = confMap("batchProcessor.class.list").split(",").map(classname => {
       Class.forName(classname.trim).newInstance().asInstanceOf[InBatchProcessor]
     })
@@ -118,7 +120,6 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
               // else {  //关联key不能插入批次集合，批次内重复，不需要重复查询 }
             }
 
-
             batchSize += 1
             currentPosition += 1
           }
@@ -148,7 +149,8 @@ class JdbcCacheBatchQueryProcessor extends StreamingProcessor {
             val cacheQuerySql = selectClause + whereClause
             val batchQueryResult =
               if(batchQueryKeyArrayBuffer.nonEmpty) {
-                JdbcUtils.getQueryResultAsMap2(cacheQuerySql, batchKeyArrayBuffer, keyName, ds)
+                //JdbcUtils.getQueryResultAsMap2(cacheQuerySql, batchKeyArrayBuffer, keyName, ds)
+                JdbcUtils.getQueryResultAsMap2(cacheQuerySql, keyName, ds)
               } else {
                 Map[String, Map[String, String]]()
               }

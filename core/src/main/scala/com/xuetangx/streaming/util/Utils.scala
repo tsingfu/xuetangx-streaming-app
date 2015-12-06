@@ -96,7 +96,7 @@ object Utils {
       val nameValueSeq = names.map(_.text).zip(values.map(_.text)) ++ innerAttrMap ++ outerAttrMap
       val propsMap = (for (nameValue<- nameValueSeq) yield (nameValue._1, nameValue._2)).toMap
       // println(propsMap.mkString("[", ",", "]"))
-      (propsMap(keyName), propsMap)
+      (propsMap(keyName).trim, propsMap)
     }
     //    (res.toMap, outerAttrMap)
     //    (outerAttrMap, res.toMap)

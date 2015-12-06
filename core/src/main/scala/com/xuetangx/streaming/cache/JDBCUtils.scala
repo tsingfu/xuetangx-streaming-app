@@ -192,7 +192,7 @@ object JdbcUtils {
   }
 
   // 通过jdbc查询sql，获取查询结果，转化为 Seq[Map[String, String]]
-  def getQueryResultAsMap2(sql: String, keysInSql: Seq[String],
+  def getQueryResultAsMap2(sql: String,
                              keyNameInResultSet: String,
                              ds: DataSource): Map[String, Map[String, String]] = {
     val resultKey2RecordMap = scala.collection.mutable.Map[String, Map[String, String]]()

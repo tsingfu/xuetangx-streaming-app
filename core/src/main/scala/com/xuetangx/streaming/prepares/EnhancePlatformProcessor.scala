@@ -2,6 +2,7 @@ package com.xuetangx.streaming.prepares
 
 import com.xuetangx.streaming.StreamingProcessor
 import com.xuetangx.streaming.util.Utils
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -23,7 +24,7 @@ class EnhancePlatformProcessor extends StreamingProcessor {
   override def process(rdd: RDD[String],
               confMap: Map[String, String],
               cacheConfMap: Map[String, String] = null,
-              dataSourceConfMap: Map[String, String] = null): RDD[String] = {
+              cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null): RDD[String] = {
 
     val agentKeyName = "agent"
 

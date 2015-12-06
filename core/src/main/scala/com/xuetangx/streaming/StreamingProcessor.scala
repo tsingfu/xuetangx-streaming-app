@@ -1,11 +1,22 @@
 package com.xuetangx.streaming
 
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 
 /** 插件类的 base Class
  * Created by tsingfu on 15/10/8.
  */
 class StreamingProcessor extends Serializable with Logging {
+
+  /**定义格式化操作，需要重写自定义
+    *
+    * @param rdd
+    * @param confMap
+    * @return
+    */
+  def format(rdd: RDD[String], confMap: Map[String, String]): RDD[String] = {
+    rdd
+  }
 
   /**处理过滤和属性增强(取值更新，增减字段等)
    *
@@ -16,7 +27,7 @@ class StreamingProcessor extends Serializable with Logging {
   def process(rdd: RDD[String],
               confMap: Map[String, String],
               cacheConfMap: Map[String, String] = null,
-              dataSourceConfMap: Map[String, String] = null): RDD[String] = {
+              cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null): RDD[String] = {
     rdd
   }
 
@@ -36,8 +47,7 @@ class StreamingProcessor extends Serializable with Logging {
    * @param rdd
    * @param confMap
    */
-  def output(rdd: RDD[String],
-             confMap: Map[String, String]): RDD[String] = {
+  def output(rdd: RDD[String], confMap: Map[String, String]): RDD[String] = {
     rdd
   }
 

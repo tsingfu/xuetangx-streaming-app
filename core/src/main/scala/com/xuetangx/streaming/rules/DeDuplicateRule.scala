@@ -1,44 +1,42 @@
-package com.xuetangx.streaming.prepares
+package com.xuetangx.streaming.rules
 
 import com.mongodb.BasicDBObject
-import com.xuetangx.streaming.StreamingProcessor
+import com.xuetangx.streaming.StreamingRDDRule
 import com.xuetangx.streaming.cache.MongoConnectionManager
 import com.xuetangx.streaming.util.Utils
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.bson.Document
 import org.json4s.JsonDSL._
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
+
 /**
- * Created by tsingfu on 15/11/9.
+ * Created by tsingfu on 15/12/1.
  */
-class DeDuplicateProcessor extends StreamingProcessor {
+class DeDuplicateRule extends StreamingRDDRule {
 
   /** 使用外部缓存识别重复数据，添加标识是否重复的属性
     *
     * @param rdd
-    * @param confMap
-    * @param cacheConfMap
     * @return
     */
-  override def process(rdd: RDD[String],
-                       confMap: Map[String, String],
-                       cacheConfMap: Map[String, String] = null,
-                       cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null): RDD[String] = {
+  override def process(rdd: RDD[String]): RDD[String] = {
+
+    val confMap = conf
+    val cacheConfMap = cacheConf
 
     // 对日志中哪个字段取值进行排重
     val logDeDuplicateKey = confMap("log.deduplicate.key") //示例：user_id
-//    val deDuplicateIntervalLabel = confMap("deduplicate.interval.label")
-    
+    //    val deDuplicateIntervalLabel = confMap("deduplicate.interval.label")
+
     // 约定：spark streaming 中排重与时间相关 正常取值：daily, minutely, hourly, monthly, yearly，：排重集合名取： collectionNamePrefix + durationKey + "_" + logDeDuplicateKey + "_" + "timeStr"
     // 其他取值，不用时间排重，排重集合名取： collectionNamePrefix + durationKey + "_" + logDeDuplicateKey ：示例: deplicate_xyz_user_id (不带时间)
-    val deDuplicateTimeDurationList = confMap("deduplicate.interval.labels") 
+    val deDuplicateTimeDurationList = confMap("deduplicate.interval.labels")
     //TODO: 支持更细粒度的排重控制
-    //val deDuplicateTimeDurationList = confMap("deduplicate.time.duration.list")  //示例： days:1, minutes:1, hours:1, months:1, years: 1 
+    //val deDuplicateTimeDurationList = confMap("deduplicate.time.duration.list")  //示例： days:1, minutes:1, hours:1, months:1, years: 1
     val intervalLabels = deDuplicateTimeDurationList.split(",").map(_.trim)
-    
+
     // 从日志哪个字段取查询 mongo 的 collection
     val logCollectionKey = confMap("log.collection.key") //示例：time
 
@@ -87,18 +85,13 @@ class DeDuplicateProcessor extends StreamingProcessor {
 
           //TODO: 使用配置方式增加通用性
           // 取时间字段（CST时间字符串中 yyyy-MM-dd）
-          
-//          val collectionNamePrefix = confMap.get("mongo.collection.name.prefix") match {
-//            case Some(x) if x.nonEmpty => x
-//            case _ => "deDuplicate_"
-//          }
-          
           val duplicate_field_map =
             intervalLabels.map(intervalKey=> {
-              
+
               val collectionPrex = collectionNamePrefix + intervalKey + "_" + logDeDuplicateKey
               //示例： deplicate_daily_user_id_20151113, deplicate_minutely_user_id_201511131658, deplicate_hourly_user_id_2015111316
-              val collectionName = getCollectionName(jValue, logCollectionKey, collectionPrex, intervalKey)  
+              val collectionName = getCollectionName(jValue, logCollectionKey, collectionPrex, intervalKey)
+              //TODO: 删除注释
               //println("= = " * 10 + "[myapp debug] collectionName1 = " + collectionName)
 
               val deDuplicateSet = deDuplicateMap.getOrElseUpdate(collectionName, scala.collection.mutable.Set[String]())
@@ -110,37 +103,40 @@ class DeDuplicateProcessor extends StreamingProcessor {
                 if (deDuplicateValue.isEmpty) 0 // 如果id 为空，不重复
                 else if (add_into_deDuplicateSet_flag) {
                   // 添加到 deDuplicateSet，批次中不重复
+                  //TODO: 删除注释
                   //println("= = " * 10 + "[myapp debug1] add_into_deDuplicateSet " + collectionName + ", add_into_deDuplicateSet_flag = " + add_into_deDuplicateSet_flag + ", not duplicate in batch, deDuplicateValue = " + deDuplicateValue + ", deDuplicateSet = " + deDuplicateSet.mkString("[", ",", "]"))
                   // 缓存数据结构方式1：
                   val coll = MongoConnectionManager.getCollection(cacheConfMap, collectionName)
                   val res = coll.find(new BasicDBObject(mongoCollectionKeyField, deDuplicateValue)).first()
                   // res 为 null 表示不存在mongo缓存中， 0代表不重复，更新外部缓存，1代表重复
                   if (res == null) {
+                    //TODO: 删除注释
                     //println("= = " * 10 + "[myapp debug2] mongo.find.res = " + res + ", not duplicate in mongo")
                     coll.insertOne(new Document(mongoCollectionKeyField, deDuplicateValue))
                     0
                   } else {
+                    //TODO: 删除注释
                     //println("= = " * 10 + "[myapp debug3] mongo.find.res = " + res + ", duplicate in mongo")
                     1
                   }
                 } else {
                   //不能添加到 deDuplicateSet，批次中重复
-                  //println("= = " * 10 + "[myapp debug] add_into_deDuplicateSet true or false = " + add_into_deDuplicateSet + ", duplicate in batch")
+                  //TODO: 删除注释
+                  //println("= = " * 10 + "[myapp debug] add_into_deDuplicateSet true or false = " + add_into_deDuplicateSet_flag + ", duplicate in batch")
                   1
                 }
 
               //添加排重属性
-              // val jsonStr_adding = "{\"" + logDeDuplicateKey + "_duplicate_flag" + "\": " + id_duplicate_flag + "}"
-              // val jValue_new = jValue.merge(parse(jsonStr_adding))
-
-              //println(Thread.currentThread().getName + "= = " * 10 + "[myapp debug] DeDuplicateProcessor.process add document in collection " + collectionName + ", document = " + logDeDuplicateKey + " _duplicate_flag = " + id_duplicate_flag + " -> " + deDuplicateValue)
+              //println(Thread.currentThread().getName + "= = " * 10 + "[myapp debug] DeDuplicateRule.process add document in collection " + collectionName + ", document = " + logDeDuplicateKey + " _duplicate_flag = " + id_duplicate_flag + " -> " + deDuplicateValue)
               val duplicateFieldName = logDeDuplicateKey + "_" + intervalKey + "_duplicate_flag"
               (duplicateFieldName, id_duplicate_flag)
             }).toMap
-          
+
+          //TODO: 删除注释
+          //println(Thread.currentThread().getName + "= = " * 4 + "[myapp] DeDuplicateRule.process " + logDeDuplicateKey + "= " + deDuplicateValue + ", duplicate_field_map = " + duplicate_field_map)
           val jValue_new = jValue.merge(render(duplicate_field_map))
           val res = compact(jValue_new)
-          //println(Thread.currentThread().getName + "= = " * 10 + "[myapp] DeDuplicateProcessor.process res = " + res)
+          //println(Thread.currentThread().getName + "= = " * 10 + "[myapp] DeDuplicateRule.process res = " + res)
           res
         }
       }
@@ -162,17 +158,16 @@ class DeDuplicateProcessor extends StreamingProcessor {
     //println("= = " * 20 + "[myapp debug] mongoCollectionValue = " + deDuplicateTimeValue + ", mongoCollectionKey = " + deDuplicateTimeKey)
     // 对 mongo.collection.key 指定的时间字段取值(格式 yyyy-MM-dd HH:mm:ss)进行加工
     val deDuplicateTimeValue2 = deDuplicateTimeValue.replace("-", "").replace(" ", "").replace(":", "")
-    
+
     intervalKey match {
       case "minutely" => prefix + "_" + deDuplicateTimeValue2.substring(0, 12)  //返回 yyyyMMddHHmm
       case "hourly" =>  prefix + "_" + deDuplicateTimeValue2.substring(0, 10)  //返回 yyyyMMddHH
       case "daily" => prefix + "_" + deDuplicateTimeValue2.substring(0, 8)  //返回 yyyyMMdd
       case "monthly" => prefix + "_" + deDuplicateTimeValue2.substring(0, 6)  //返回 yyyyMM
       case "yearly" => prefix + "_" + deDuplicateTimeValue2.substring(0, 4)  //返回 yyyy
-      case _ => 
+      case _ =>
         println("= = " * 10 + "[myapp] WARNING: durationLabel = " + intervalKey +", duplicateSet name set to " + prefix)
         prefix  //其他条件下，不用根据时间取值
     }
   }
 }
-
