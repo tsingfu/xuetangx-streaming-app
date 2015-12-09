@@ -12,7 +12,7 @@ import org.elasticsearch.client.Client
 import org.elasticsearch.common.xcontent.XContentFactory._
 import org.elasticsearch.common.xcontent.XContentHelper
 import org.elasticsearch.indices.IndexMissingException
-import org.elasticsearch.script.ScriptService.ScriptType
+//import org.elasticsearch.script.ScriptService.ScriptType  //0.90.11版本没有该类
 import org.json4s.DefaultFormats
 import org.json4s.JsonAST.JField
 import org.json4s.JsonDSL._
@@ -177,13 +177,14 @@ class ESWriter extends StreamingProcessor {
             }
           } else { // 方式2：脚本方式
           val updateRequest =
-            (if (esScriptEnable) {
+          // 0.90.11 没有 ScriptType 类
+//            (if (esScriptEnable) {
+//              new UpdateRequest(idx, typ, md5Id)
+//                      .script(esScriptName, ScriptType.FILE).addScriptParam(esScriptParam, value).upsert(indexRequest)
+//            } else {
               new UpdateRequest(idx, typ, md5Id)
-                      .script(esScriptName, ScriptType.FILE).addScriptParam(esScriptParam, value)
-            } else {
-              new UpdateRequest(idx, typ, md5Id)
-                      .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value)
-            }).upsert(indexRequest)
+                      .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value).upsert(indexRequest)
+//            })
 
             client.update(updateRequest).get()
           }

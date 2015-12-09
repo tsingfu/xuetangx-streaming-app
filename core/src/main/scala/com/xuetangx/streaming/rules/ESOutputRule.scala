@@ -13,7 +13,7 @@ import org.elasticsearch.client.Client
 import org.elasticsearch.common.xcontent.XContentFactory._
 import org.elasticsearch.common.xcontent.XContentHelper
 import org.elasticsearch.indices.IndexMissingException
-import org.elasticsearch.script.ScriptService.ScriptType
+//import org.elasticsearch.script.ScriptService.ScriptType  //0.90.11版本没有该类
 import org.json4s.DefaultFormats
 import org.json4s.JsonAST.JField
 import org.json4s.JsonDSL._
@@ -94,7 +94,6 @@ class ESOutputRule extends StreamingRDDRule {
           val jValue_new1= jValue.merge(render(addFieldsMap))
 
           val jvalue_map = jValue_new1.extract[Map[String, String]]
-          //TODO: 发现部分统计信息中存在 raw_data 字段包含 raw_data 字段
           if (jvalue_map.contains(RAW_DATA_KEY)) {
             println("= = " * 10 + "[myapp ESOutputRule.output.question] source = " + jvalue_map(RAW_DATA_KEY))
           }
@@ -132,9 +131,7 @@ class ESOutputRule extends StreamingRDDRule {
           var raw_data = XContentHelper.convertToJson(indexRequest.source(), true)
           json_map.put(RAW_DATA_KEY, raw_data)
 
-
           if (esAddUpdateMethod == "getAndUpdate") { // 方式1：先查询再更新
-
             var getResponse: GetResponse = null
             try{
               getResponse = client.prepareGet(idx, typ, md5Id).execute().actionGet()
@@ -177,17 +174,18 @@ class ESOutputRule extends StreamingRDDRule {
             }
           } else { // 方式2：脚本方式
             val updateRequest =
-              (if (esScriptEnable) {
+              // 0.90.11 没有 ScriptType 类
+//              (if (esScriptEnable) {
+//                new UpdateRequest(idx, typ, md5Id)
+//                        .script(esScriptName, ScriptType.FILE).addScriptParam(esScriptParam, value).upsert(indexRequest)
+//              } else {
                 new UpdateRequest(idx, typ, md5Id)
-                        .script(esScriptName, ScriptType.FILE).addScriptParam(esScriptParam, value)
-              } else {
-                new UpdateRequest(idx, typ, md5Id)
-                        .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value)
-              }).upsert(indexRequest)
+                        .script(s"ctx._source.$valueKey += p1").addScriptParam("p1", value).upsert(indexRequest)
+//              })
             client.update(updateRequest).get()
           }
 
-          println("= = " * 10 + "[myapp ESOutputRule.output] source = " + raw_data)
+          // println("= = " * 10 + "[myapp ESOutputRule.output] source = " + raw_data)
           jsonStr
         }
       }

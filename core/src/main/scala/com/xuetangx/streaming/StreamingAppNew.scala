@@ -3,8 +3,7 @@ package com.xuetangx.streaming
 /**
  * Created by tsingfu on 15/11/29.
  */
-import com.xuetangx.streaming.cache.{JdbcPool, JdbcUtils}
-import com.xuetangx.streaming.util.{SparkUtils, DateFormatUtils, Utils}
+import com.xuetangx.streaming.util.{DateFormatUtils, SparkUtils, Utils}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -107,9 +106,7 @@ object StreamingAppNew {
             case _ => Map[String, String]()
           }
 
-          //TODO: broadcast
-          val cache_broadcast = null
-          rule.init(ruleId, ruleConf, cacheConf, cache_broadcast, outputConf)
+          rule.init(ruleId, ruleConf, cacheConf, outputConf)
           rule
         case _ =>
           throw new Exception("unsupported step.method " + ruleMethod)
@@ -210,10 +207,7 @@ object StreamingAppNew {
               case _ => null
             }
 
-            //TODO: broadcast
-            val cache_broadcast = null
-
-            rule.init(ruleId, ruleCconf, cacheConf, cache_broadcast, outputConf)
+            rule.init(ruleId, ruleCconf, cacheConf, outputConf)
             rule
           case _ =>
             throw new Exception("unsupported step.method " + ruleMethod)
@@ -277,7 +271,7 @@ object StreamingAppNew {
 //        val outputRule = Class.forName(outputRule_clz_name).newInstance().asInstanceOf[StreamingRDDRule]
 //        outputRule.setOutputConf(outputConf)
 //        rule.setOutputRule(outputRule = outputRule)
-        rule.init(ruleId, conf = ruleConf, cacheConf = cacheConf, cache_broadcast = null, outputConf = outputConf)
+        rule.init(ruleId, conf = ruleConf, cacheConf = cacheConf, outputConf = outputConf)
         rule
       }.toSeq.sortWith(_.ruleId < _.ruleId)
 
@@ -304,35 +298,59 @@ object StreamingAppNew {
       case _ =>
     }
 
-    appsPropMap(appId).get("spark.streaming.concurrentJobs") match {
-      case Some(x) if x.nonEmpty => sparkConf.set("spark.streaming.concurrentJobs", x.trim)
-      case _ =>
-    }
+//    appsPropMap(appId).get("spark.streaming.concurrentJobs") match {
+//      case Some(x) if x.nonEmpty => sparkConf.set("spark.streaming.concurrentJobs", x.trim)
+//      case _ =>
+//    }
 
     val sc = new SparkContext(sparkConf)
 
     // TODO: 使用 broadcast 优化外部缓存
-    val cache_broadcasts =
-      cachesPropMap.filter{
-        case (cacheId, cacheConfMap) =>
-          cacheConfMap.getOrElse("broadcast.enabled", "false").toBoolean
-      }.map{case (cacheId, cacheConfMap) =>
-        val ds = JdbcPool.getPool(cacheConfMap)
-        val keyName = cacheConfMap("keyName")
-        val selectKeyNames = cacheConfMap.get("cache.keyName.list") match {
-          case Some(x) if x.nonEmpty => x
-          case _ => "*"
-        }
-        val tableName = cacheConfMap("tableName")
-        val cacheSql = "select " + keyName + ", " + selectKeyNames + " from " + tableName
-        (cacheId, sc.broadcast(JdbcUtils.getQueryResultAsMap2(cacheSql, keyName, ds)))
-      }
-    preparesRule_active.filter(rule => {
-      rule.cacheConf.getOrElse("broadcast.enabled", "false").toBoolean
-    }).foreach(rule => {
-      val cacheId = rule.cacheConf("cache.id")
-      rule.setCacheBroadcast(cache_broadcasts(cacheId))
-    })
+    // 测试方法1：该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+    //cache_broadcasts: Map[String, Broadcast[Map[String, Map[String, String]]]
+//    val cache_broadcasts =
+//      cachesPropMap.filter{
+//        case (cacheId, cacheConfMap) =>
+//          cacheConfMap.getOrElse("broadcast.enabled", "false").toBoolean
+//      }.map{case (cacheId, cacheConfMap) =>
+//        val ds = JdbcPool.getPool(cacheConfMap)
+//        val keyName = cacheConfMap("keyName")
+//        val selectKeyNames = cacheConfMap.get("cache.keyName.list") match {
+//          case Some(x) if x.nonEmpty => x
+//          case _ => "*"
+//        }
+//        val tableName = cacheConfMap("tableName")
+//        val cacheSql = "select " + keyName + ", " + selectKeyNames + " from " + tableName
+//        (cacheId, sc.broadcast(JdbcUtils.getQueryResultAsMap2(cacheSql, keyName, ds)))
+//      }
+
+    // 测试方法2：该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+//    val cache =
+//      cachesPropMap.filter{
+//        case (cacheId, cacheConfMap) =>
+//          cacheConfMap.getOrElse("broadcast.enabled", "false").toBoolean
+//      }.map{case (cacheId, cacheConfMap) =>
+//        val ds = JdbcPool.getPool(cacheConfMap)
+//        val keyName = cacheConfMap("keyName")
+//        val selectKeyNames = cacheConfMap.get("cache.keyName.list") match {
+//          case Some(x) if x.nonEmpty => x
+//          case _ => "*"
+//        }
+//        val tableName = cacheConfMap("tableName")
+//        val cacheSql = "select " + keyName + ", " + selectKeyNames + " from " + tableName
+//        (cacheId, JdbcUtils.getQueryResultAsMap2(cacheSql, keyName, ds))
+//      }
+//
+//    val cache_broadcast = sc.broadcast(cache)
+
+    //Note: broacast 不能这么使用，原因：executor收到 task后的rule后，反序列化后的Rule 示例中的 broadcast 和 driver端的broadcast不是同一个对象，
+    // 导致driver每次都会重新broacast
+//    preparesRule_active.filter(rule => {
+//      rule.cacheConf.getOrElse("broadcast.enabled", "false").toBoolean
+//    }).foreach(rule => {
+//      val cacheId = rule.cacheConf("cache.id")
+//      rule.setCacheBroadcast(cache_broadcasts(cacheId))
+//    })
 
     appsPropMap(appId).get("checkpointDir") match {
       case Some(x) if x.nonEmpty => sc.setCheckpointDir(x)
@@ -375,9 +393,14 @@ object StreamingAppNew {
     val clz = appsPropMap(appId).getOrElse("class", "com.xuetangx.streaming.StreamingAppNew")
     val instance = Class.forName(clz).newInstance().asInstanceOf[StreamingAppNew]
     //  流数据处理流程
-    instance.process(stream, ssc, sqlc,
-      preparesRule_active, compute_preparesRule_active, compute_computesRule_active
-    )
+    //instance.process(stream, ssc, sqlc, preparesRule_active, compute_preparesRule_active, compute_computesRule_active, cache_broadcasts)
+    //instance.process(stream, ssc, sqlc, preparesRule_active, compute_preparesRule_active, compute_computesRule_active, cache_broadcast)
+
+    instance.process(stream, ssc, sqlc, preparesRule_active, compute_preparesRule_active, compute_computesRule_active)
+
+    //测试恢复
+    //instance.test(stream, ssc, sqlc, preparesRule_active)
+    //instance.test2(stream, ssc, sqlc, preparesRule_active)
 
     ssc.start()
     ssc.awaitTermination()
@@ -392,6 +415,153 @@ object StreamingAppNew {
   */
 class StreamingAppNew extends Serializable with Logging {
 
+  /**
+   * 测试 rdd + df unpersist
+   * @param dStream
+   * @param ssc
+   * @param sqlc
+   * @param preparesRules_active
+   */
+  def test(dStream: DStream[String],
+           ssc: StreamingContext, //For 最近上一批次和本批次排重
+           sqlc: SQLContext,
+           preparesRules_active: Seq[StreamingRDDRule]): Unit ={
+
+    val format_rules = preparesRules_active.filter(_.conf.getOrElse("step.type", "") == "format")
+    val dStream2 = dStream.transform(rdd=>{
+      val rddJson =
+        if (format_rules.isEmpty) {
+          println("- - " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found no format_class")
+          rdd
+        } else {
+          val rule = format_rules.head
+          println("- - " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found format_class = " + rule.conf.getOrElse("class", "no format.class"))
+          // 约定format规则每个数据结构只有一个
+          rule.format(rdd)
+        }
+
+      //判断数据是否为空，不为空执行一些操作
+      rddJson.persist()  //此处 persist 确保，format_class 插件类 不重复结算
+      val df = sqlc.jsonRDD(rddJson)
+      df.printSchema()
+      val res =
+        if (df.schema.fieldNames.length > 0) {
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found df has data")
+          rddJson
+        } else {
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found empty df")
+          sqlc.sparkContext.emptyRDD[String]
+        }
+      res
+    })
+
+    val selectExprClause = "time, uuid, user_id, event_type, host, platform, origin_referer, spam, course_id"
+    dStream2.foreachRDD(rdd=>{
+      //判断数据是否为空
+      rdd.persist()  //此处 persist 确保，format_class 插件类 不重复计算
+      val df = sqlc.jsonRDD(rdd)
+      if (df.schema.fieldNames.length > 0) {
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] df has data")
+        df.printSchema()
+        val df2 = df.selectExpr(selectExprClause.split(","): _*)
+        df2.persist()
+        df2.printSchema()
+        val df3 = df2.groupBy("platform").agg(count("user_id"))
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] df3.show()")
+        df3.show()
+        val rdd2 = df3.toJSON
+
+        val result_cnt = rdd2.count()
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] result_cnt = " + result_cnt)
+      } else {
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] found empty df")
+      }
+      //rdd.unpersist()  //测试点1 不做 rdd.unpersist
+      // df.unpersist()  //测试点2：不做 df.unpersist
+    })
+  }
+
+
+
+  /**
+   * 测试 rdd + df unpersist
+   * @param dStream
+   * @param ssc
+   * @param sqlc
+   * @param preparesRules_active
+   */
+  def test2(dStream: DStream[String],
+           ssc: StreamingContext, //For 最近上一批次和本批次排重
+           sqlc: SQLContext,
+           preparesRules_active: Seq[StreamingRDDRule]): Unit ={
+
+    val rdd_cache_map = scala.collection.mutable.Map[String, RDD[String]]()
+    val df_cache_map = scala.collection.mutable.Map[String, DataFrame]()
+
+    val format_rules = preparesRules_active.filter(_.conf.getOrElse("step.type", "") == "format")
+    val dStream2 = dStream.transform(rdd=>{
+      val rddJson =
+        if (format_rules.isEmpty) {
+          println("- - " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found no format_class")
+          rdd
+        } else {
+          val rule = format_rules.head
+          println("- - " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found format_class = " + rule.conf.getOrElse("class", "no format.class"))
+          // 约定format规则每个数据结构只有一个
+          rule.format(rdd)
+        }
+
+      //判断数据是否为空，不为空执行一些操作
+      rddJson.persist()  //此处 persist 确保，format_class 插件类 不重复结算
+      rdd_cache_map.put("rdd_after_format" + "_" + System.currentTimeMillis(), rddJson)
+      val df = sqlc.jsonRDD(rddJson)
+      df.printSchema()
+      val res =
+        if (df.schema.fieldNames.length > 0) {
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found df has data")
+          rddJson
+        } else {
+          println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream.transform] found empty df")
+          sqlc.sparkContext.emptyRDD[String]
+        }
+      res
+    })
+
+    val selectExprClause = "time, uuid, user_id, event_type, host, platform, origin_referer, spam, course_id"
+    dStream2.foreachRDD(rdd=>{
+      //判断数据是否为空
+      rdd.persist()  //此处 persist 确保，format_class 插件类 不重复计算
+      rdd_cache_map.put("rdd_begin_foreachrdd" + "_" + System.currentTimeMillis(), rdd)
+      val df = sqlc.jsonRDD(rdd)
+      if (df.schema.fieldNames.length > 0) {
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] df has data")
+        df.printSchema()
+        val df2 = df.selectExpr(selectExprClause.split(","): _*)
+        df2.persist()
+        df_cache_map.put("df_selected" + "_" + System.currentTimeMillis(), df2)
+
+        df2.printSchema()
+        val df3 = df2.groupBy("platform").agg(count("user_id"))
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] df3.show()")
+        df3.show()
+        val rdd2 = df3.toJSON
+
+        val result_cnt = rdd2.count()
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] result_cnt = " + result_cnt)
+      } else {
+        println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] found empty df")
+      }
+      //rdd.unpersist()  //测试点1 不做 rdd.unpersist
+      // df.unpersist()  //测试点2：不做 df.unpersist
+
+      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] found rdd_cache_map = " + rdd_cache_map.keys.mkString("[", ",", "]"))
+      println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp test.dStream2.foreachRDD] found df_cache_map = " + df_cache_map.keys.mkString("[", ",", "]"))
+
+      rdd_cache_map.values.foreach(_.unpersist())
+      df_cache_map.values.foreach(_.unpersist())
+    })
+  }
+
   /** 定义流数据处理流程
     * 1 文本日志到DataFrame的转换，如果日志是json字符串，直接转换(可优化的点1，可配置schema)；如果csv等，配置字段名先转换为json形式，再处理
     * 2
@@ -403,7 +573,30 @@ class StreamingAppNew extends Serializable with Logging {
               sqlc: SQLContext,
               preparesRules_active: Seq[StreamingRDDRule],
               compute_preparesRules_active: Map[String, Seq[StreamingRDDRule]],
-              compute_computesRules_active: Map[String, Seq[StreamingRDDRule]]): Unit = {
+              compute_computesRules_active: Map[String, Seq[StreamingRDDRule]]
+              //,
+              //cache_broadcasts: Map[String, Broadcast[Map[String, Map[String, String]]]],
+              //cache_broadcast: Broadcast[Map[String, Map[String, Map[String, String]]]]
+                     ): Unit = {
+
+    val rdd_cache_map = scala.collection.mutable.Map[String, RDD[String]]()
+    val df_cache_map = scala.collection.mutable.Map[String, DataFrame]()
+
+    //TODO: broadcast
+    // 测试方法1：该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+//    def fun_get_broadcast_value(cacheId: String): Map[String, Map[String, String]] ={
+//      if (cache_broadcasts.contains(cacheId)){
+//        cache_broadcasts(cacheId).value
+//      } else {
+//        //Map[String, Map[String, String]]()
+//        null
+//      }
+//    }
+
+    //测试方法2: 该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+//    def fun_get_broadcast: Broadcast[Map[String, Map[String, Map[String, String]]]] = cache_broadcast
+
+
 
     // 准备阶段处理
     // Note: 准备阶段不支持 batchDeduplicate 步骤
@@ -429,7 +622,8 @@ class StreamingAppNew extends Serializable with Logging {
             }
 
           //优化 df 的生成
-          rddJson.cache()
+          rddJson.persist()
+          rdd_cache_map.put("rdd_after_format" + "_" + System.currentTimeMillis(), rddJson)
           val df = sqlc.jsonRDD(rddJson)
           val schema = df.schema
 
@@ -451,9 +645,16 @@ class StreamingAppNew extends Serializable with Logging {
                 println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing rule_step " + rule_step)
                 println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any.isInstanceOf[RDD[String]] + ", is DataFrame or not = " + res_any.isInstanceOf[DataFrame] + ", prepares.step.id = " + rdd_rule.ruleId)
 
+                val cache_id = rdd_rule.cacheConf.getOrElse("cache.id", "")
+
+                //val res = processStep(res_any, res_schema, sqlc, rdd_rule, rule_step, cache_broadcasts.getOrElse(cache_id, null))
+                //val res = processStep(res_any, res_schema, sqlc, rdd_rule, rule_step, fun_get_broadcast_value _)
+                //val res = processStep(res_any, res_schema, sqlc, rdd_rule, rule_step, fun_get_broadcast _)
                 val res = processStep(res_any, res_schema, sqlc, rdd_rule, rule_step)
                 res_any = res._1
                 res_schema = res._2
+                res._3.foreach{case (k, vrdd) => rdd_cache_map.put(k, vrdd)}
+                res._4.foreach{case (k, vdf) => df_cache_map.put(k, vdf)}
                 println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] finish processing rule_step " + rule_step)
             }
             val rdd2 = res_any match {
@@ -476,7 +677,8 @@ class StreamingAppNew extends Serializable with Logging {
       // 如果不配置foreacheRDD 会提示：Exception in thread "main" java.lang.IllegalArgumentException: requirement failed: No output operations registered, so nothing to execute
       dStream_after_prepares.foreachRDD(rddJson => {
         logWarning("[myapp configuration] found no active computeStatistic in computeStatistics part")
-        rddJson //不执行action操作
+        //rddJson //不执行action操作
+        SparkUtils.unpersist_rdd_df(rdd_cache_map, df_cache_map)
       })
     } else {
       //存在有效的计算配置
@@ -527,11 +729,15 @@ class StreamingAppNew extends Serializable with Logging {
 
                       //println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] res_any is RDD or not = " + res_any_in_computeStatistic.isInstanceOf[RDD[String]] + ", is DataFrame or not = " + res_any_in_computeStatistic.isInstanceOf[DataFrame] + ", rule_step " + rule_step)
 
-                      val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc,
-                        rdd_rule, rule_step)
+                      val cache_id = rdd_rule.cacheConf.getOrElse("cache.id", "")
+
+                      //val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc, rdd_rule, rule_step, fun_get_broadcast_value _)
+                      //val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc, rdd_rule, rule_step, fun_get_broadcast _)
+                      val res = processStep(res_any_in_computeStatistic, res_schema_in_computeStatistic, sqlc, rdd_rule, rule_step)
                       res_any_in_computeStatistic = res._1
                       res_schema_in_computeStatistic = res._2
-
+                      res._3.foreach{case (k, vrdd) => rdd_cache_map.put(k, vrdd)}
+                      res._4.foreach{case (k, vdf) => df_cache_map.put(k, vdf)}
                       println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing rule_step " + rule_step)
                   }
 
@@ -558,6 +764,7 @@ class StreamingAppNew extends Serializable with Logging {
             stream.foreachRDD(rddJson => {
               println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [Warning myapp configuration] StreamingApp.process.compute found no active computeStatistic.computes in computeStatistics part")
               //rddJson
+              SparkUtils.unpersist_rdd_df(rdd_cache_map, df_cache_map)
             })
           } else {
             //存在有效的计算配置
@@ -565,10 +772,11 @@ class StreamingAppNew extends Serializable with Logging {
             // 多少个 computeStatistic，多少个stream，多少个job
             // stream： DStream[String]
             stream.foreachRDD(rddJson => {
-              SparkUtils.persist_rdd(rddJson)
+              if (SparkUtils.persist_rdd(rddJson) != null){
+                rdd_cache_map.put("rdd_begin_stream_foreachRDD" + "_" + System.currentTimeMillis(), rddJson)
+              }
               val df = sqlc.jsonRDD(rddJson)
               val schema = df.schema
-
 
               println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process.computes begin action for computeStatisticId = " + computeStatisticId)
               if (schema.fieldNames.isEmpty) {
@@ -584,9 +792,15 @@ class StreamingAppNew extends Serializable with Logging {
                       val rule_step = "computeStatistic.id[" + computeStatisticId + "]-computes.step.id[" + rdd_rule.ruleId + "]"
                       println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process start processing rule_step " + rule_step)
 
-                      // compute 步骤输出的结果是 每个 computeStatistic.computes的结果
-                      val res = processStep(df, schema, sqlc, rdd_rule, rule_step)
+                      val cache_id = rdd_rule.cacheConf.getOrElse("cache.id", "")
 
+                      // compute 步骤输出的结果是 每个 computeStatistic.computes的结果
+                      //val res = processStep(df, schema, sqlc, rdd_rule, rule_step, cache_broadcasts.getOrElse(cache_id, null))
+                      //val res = processStep(df, schema, sqlc, rdd_rule, rule_step, fun_get_broadcast_value _)
+                      //val res = processStep(df, schema, sqlc, rdd_rule, rule_step, fun_get_broadcast _)
+                      val res = processStep(df, schema, sqlc, rdd_rule, rule_step)
+                      res._3.foreach{case (k, vrdd) => rdd_cache_map.put(k, vrdd)}
+                      res._4.foreach{case (k, vdf) => df_cache_map.put(k, vdf)}
                       println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing rule_step " + rule_step)
                       res._1.asInstanceOf[RDD[String]]
                   }
@@ -602,7 +816,8 @@ class StreamingAppNew extends Serializable with Logging {
                   println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process.computes found empty result, need no compute action for computeStatisticId = " + computeStatisticId)
                 }
               }
-              //rddJson.unpersist()
+              rddJson.unpersist()
+              SparkUtils.unpersist_rdd_df(rdd_cache_map, df_cache_map)
             })
           }
           println("= = " * 4 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.process finish processing computeStatistics in computeStatisticId " + computeStatisticId)
@@ -615,7 +830,15 @@ class StreamingAppNew extends Serializable with Logging {
                   res_schema: StructType,
                   sqlc: SQLContext,
                   rdd_rule: StreamingRDDRule,
-                  rule_step: String = null): (Any, StructType) = {
+                  rule_step: String = null
+                  //,
+                  //cache_broadcast: Broadcast[Map[String, Map[String, String]]]
+                  //fun_get_broadcast_value: (String) => Map[String, Map[String, String]],
+                  //fun_get_broadcast: () => Broadcast[Map[String, Map[String, Map[String, String]]]]
+                         ): (Any, StructType, scala.collection.mutable.Map[String, RDD[String]], scala.collection.mutable.Map[String, DataFrame]) = {
+
+    val rdd_cache_map = scala.collection.mutable.Map[String, RDD[String]]()
+    val df_cache_map = scala.collection.mutable.Map[String, DataFrame]()
 
     val confMap = rdd_rule.conf
 
@@ -629,9 +852,12 @@ class StreamingAppNew extends Serializable with Logging {
           case "spark-sql" => //spark-sql方式处理后，输出DataFrame
             val df = res_any match {
               case x: RDD[String] =>
-                SparkUtils.persist_rdd(x)
+                if (SparkUtils.persist_rdd(x) != null) {
+                  rdd_cache_map.put(rule_step + "_" + System.currentTimeMillis(), x)
+                }
                 sqlc.jsonRDD(x, res_schema)
-              case x: DataFrame => x
+              case x: DataFrame =>
+                x
             }
 
             println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares] df.schema = ")
@@ -657,21 +883,26 @@ class StreamingAppNew extends Serializable with Logging {
               // TODO: 测试 schmea
               df2.printSchema()
 
-              (df2, df2.schema)
+              (df2, df2.schema, rdd_cache_map, df_cache_map)
             } else { // 空的 DataFrame
               print("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares found empty DataFrame] in stepPhase = " + rule_step)
-              (df, df.schema)
+              (df, df.schema, rdd_cache_map, df_cache_map)
             }
 
           case "plugin" => //插件类处理后，结构可能变化，
 
             val rdd2 = res_any match {
-              case x: RDD[String] => rdd_rule.process(x)
+              case x: RDD[String] =>
+                //rdd_rule.process(x, fun_get_broadcast_value)
+                //rdd_rule.process(x, fun_get_broadcast)
+                rdd_rule.process(x)
               case x: DataFrame =>
+                //rdd_rule.process(x.toJSON, fun_get_broadcast_value)
+                //rdd_rule.process(x.toJSON, fun_get_broadcast)
                 rdd_rule.process(x.toJSON)
             }
             println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares data after stepPhase = " + rule_step +"], rdd2.partitions.length = " + rdd2.partitions.length)
-            (rdd2, null)
+            (rdd2, null, rdd_cache_map, df_cache_map)
         }
 
       case "compute" =>
@@ -681,18 +912,19 @@ class StreamingAppNew extends Serializable with Logging {
             val df = res_any match {
               case x: RDD[String] =>
                 println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] stepPhase = " + rule_step + ", res_schema null or not = " + (res_schema == null))
-                SparkUtils.persist_rdd(x)
+                if (SparkUtils.persist_rdd(x) != null){
+                  rdd_cache_map.put(rule_step + "_" + System.currentTimeMillis(), x)
+                }
                 sqlc.jsonRDD(x, res_schema)
               case x: DataFrame => x
             }
-            //df.persist()  // map 操作中不需要，应为在操作最后有 df.unpersist()
             println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data before stepPhase = " + rule_step +", df.rdd.length = " + df.rdd.partitions.length + ", df = ")
             df.printSchema()
 
             val result =
               if (df.schema.fieldNames.isEmpty) {
                 println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] found empty dataFrame before compute rule_step = " + rule_step)
-                (sqlc.sparkContext.emptyRDD, null)
+                (sqlc.sparkContext.emptyRDD, null, rdd_cache_map, df_cache_map)
               } else {
                 println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data before stepPhase = " + rule_step + ", df.schema.fieldNames.length = " + df.schema.fieldNames.length)
 
@@ -719,6 +951,7 @@ class StreamingAppNew extends Serializable with Logging {
 
 //                if (!df2.rdd.isEmpty()) {
                   df2.persist()
+                df_cache_map.put(rule_step + "_" + "before_group_by" + "_" + System.currentTimeMillis(), df2)
 
                   //为统计指标设置lebels，便于配置中引用
                   val statisticKeyMap = confMap("statisticKeyMap").split(",").map(kvs => {
@@ -834,7 +1067,7 @@ class StreamingAppNew extends Serializable with Logging {
                       rdd_output
                     })
 
-                  (resultSeq_output.reduce(_ union _), null)
+                  (resultSeq_output.reduce(_ union _), null, rdd_cache_map, df_cache_map)
 //                } else {
 //                  println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute ] found empty dataFrame after rule_step = " + rule_step)
 //                  //(null, null)
@@ -859,7 +1092,7 @@ class StreamingAppNew extends Serializable with Logging {
 
             //TODO: 支持插件类方式计算统计指标
             //throw new Exception("does not support to compute statics using plugin class")
-            (rdd_output, null)
+            (rdd_output, null, rdd_cache_map, df_cache_map)
         }
       //println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp] StreamingApp.processStep finished preocessing rule_step = " + rule_step)
     }

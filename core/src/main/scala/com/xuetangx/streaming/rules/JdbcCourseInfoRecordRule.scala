@@ -18,22 +18,23 @@ class JdbcCourseInfoRecordRule extends StreamingRecordRule {
     */
   override def process(record: String,
                        key: String,
-                       cache_data1: Map[String, Map[String, String]] = null,  // cache_broadcast_value
-                       cache_data2: scala.collection.mutable.Map[String, Map[String, String]] = null,  // 批次查询结果累计
+                       //cache_data1: Map[String, Map[String, String]] = null,  // cache_broadcast_value
+                       //cache_data2: scala.collection.mutable.Map[String, Map[String, String]] = null,  // 批次查询结果累计
+                       cache_data2: java.util.concurrent.ConcurrentHashMap[String, Map[String, String]] = null,  // 支持并发
                        cache_data3: Map[String, Map[String, String]] = null  //每个批次查询结果
                        ): String = {
-    val jValue = parse(record)
-    //取 courseId
-//    val courseId = Utils.strip(compact(jValue \ "course_id"), "\"")
 
     val key_cache =
-      if (cache_data1 != null && cache_data1.contains(key)) {
-        cache_data1(key)
-      } else if (cache_data2 != null && cache_data2.contains(key)) {
-        cache_data2(key)
+//      if (cache_data1 != null && cache_data1.contains(key)) {
+//        cache_data1(key)
+//      } else
+      if (cache_data2 != null && cache_data2.contains(key)) {
+        cache_data2.get(key)
       } else if (cache_data3 != null && cache_data3.contains(key)) {
         cache_data3(key)
       } else null
+
+    val jValue = parse(record)
 
     //val jsonStr_adding =
     val addFieldMap =

@@ -1,6 +1,5 @@
 package com.xuetangx.streaming
 
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 
 /**
@@ -16,7 +15,7 @@ class StreamingRDDRule extends Serializable with Logging {
   var enabled: Boolean = _
 
   var cacheConf: Map[String, String] = null
-  var cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null
+  //var cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null
 
   //TODO: 为外部缓存处理，提供的插件类
   var recordRules: Array[StreamingRecordRule] = null
@@ -28,7 +27,7 @@ class StreamingRDDRule extends Serializable with Logging {
   def init(ruleId: String, 
            conf: Map[String, String], 
            cacheConf: Map[String, String] = null,
-           cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null,
+           //cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null,
            outputConf: Map[String, String] = null) = {
 
     this.ruleId = ruleId
@@ -45,9 +44,11 @@ class StreamingRDDRule extends Serializable with Logging {
 
     if (cacheConf != null) {
       this.cacheConf = cacheConf
-      if (cacheConf.getOrElse("broadcast.enabled", "false").toBoolean && cache_broadcast != null) {
-        this.cache_broadcast = cache_broadcast
-      }
+//      if (cacheConf.getOrElse("broadcast.enabled", "false").toBoolean && cache_broadcast != null) {
+//        this.cache_broadcast = cache_broadcast
+//      }
+    } else {
+      this.cacheConf = Map[String, String]()
     }
 
     val recordRule_clzes = conf.getOrElse("batchProcessor.class.list", "").trim.split(",").map(_.trim).filter(_.nonEmpty)
@@ -97,11 +98,11 @@ class StreamingRDDRule extends Serializable with Logging {
     this.cacheConf = cacheConf
   }
 
-  def setCacheBroadcast(cache_broadcast: Broadcast[Map[String, Map[String, String]]]): Unit = {
-    if (cache_broadcast != null) {
-      this.cache_broadcast = cache_broadcast
-    }
-  }
+//  def setCacheBroadcast(cache_broadcast: Broadcast[Map[String, Map[String, String]]]): Unit = {
+//    if (cache_broadcast != null) {
+//      this.cache_broadcast = cache_broadcast
+//    }
+//  }
 
   def setOutputConf(outputConf: Map[String, String]): Unit = {
     this.outputConf = outputConf
@@ -125,7 +126,12 @@ class StreamingRDDRule extends Serializable with Logging {
     * @param rdd
     * @return
     */
-  def process(rdd: RDD[String]): RDD[String] = {
+  def process(rdd: RDD[String]
+              //,
+              //cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null,
+              //fun_get_broadcast_value: (String) => Map[String, Map[String, String]]
+              //fun_get_broadcast_value: () => Broadcast[Map[String, Map[String, Map[String, String]]]]
+                     ): RDD[String] = {
     rdd
   }
 

@@ -19,7 +19,12 @@ class TimeRule extends StreamingRDDRule {
     * @param rdd
     * @return
     */
-  override def process(rdd: RDD[String]): RDD[String] = {
+  override def process(rdd: RDD[String]
+                       //,
+                       //cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null,
+                       //fun_get_broadcast_value: (String) => Map[String, Map[String, String]]
+                       //fun_get_broadcast: () => Broadcast[Map[String, Map[String, Map[String, String]]]]
+                              ): RDD[String] = {
 
     val confMap = this.conf
     // val cacheConfMap = this.cacheConf

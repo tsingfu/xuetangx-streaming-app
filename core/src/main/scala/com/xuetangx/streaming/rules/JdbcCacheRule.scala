@@ -4,7 +4,7 @@ package com.xuetangx.streaming.rules
  * Created by tsingfu on 15/12/1.
  */
 import com.xuetangx.streaming.StreamingRDDRule
-import com.xuetangx.streaming.cache.{JdbcPool, JdbcUtils}
+import com.xuetangx.streaming.cache.{JdbcCacheManager, JdbcPool, JdbcUtils}
 import com.xuetangx.streaming.util.Utils
 import org.apache.spark.rdd.RDD
 import org.json4s.jackson.JsonMethods._
@@ -18,7 +18,12 @@ class JdbcCacheRule extends StreamingRDDRule {
     * @param rdd
     * @return
     */
-  override def process(rdd: RDD[String]): RDD[String] = {
+  override def process(rdd: RDD[String]
+                       //,
+                       //cache_broadcast: Broadcast[Map[String, Map[String, String]]] = null,
+                       //fun_get_broadcast_value: (String) => Map[String, Map[String, String]]
+                       //fun_get_broadcast: () => Broadcast[Map[String, Map[String, Map[String, String]]]]
+                              ): RDD[String] = {
 
     val confMap = conf
     val cacheConfMap = cacheConf
@@ -40,14 +45,26 @@ class JdbcCacheRule extends StreamingRDDRule {
     }
     val selectClause = "select " + keyName + ", " + selectKeyNames + " from " + tableName
 
-    val broadcast_enabled = cacheConfMap.getOrElse("broadcast.enabled", "false").toBoolean
-    val cache_broadcast_value = if (broadcast_enabled) cache_broadcast.value else null
+    //val broadcast_enabled = cacheConfMap.getOrElse("broadcast.enabled", "false").toBoolean
+    //val cache_id = cacheConf.getOrElse("cache.id", "").trim
 
-    val cache_data = scala.collection.mutable.Map[String, Map[String, String]]()
+    //该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+    //val cache_broadcast_value = if (broadcast_enabled  && cache_broadcast != null) cache_broadcast.value else null
+    //测试1, 该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+    //val cache_broadcast_value = fun_get_broadcast_value(cache_id)
+    // 测试2： 该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
+    //val cache_broadcast_value = fun_get_broadcast().value.getOrElse(cache_id, null)
+    // 测试3：伪 broadcast， 每个 task 反序列后，需要反复进行 broadcast操作，非常慢； 原因：不能出现在rdd map操作之外中，否者会遇到每个 task 序列和反序列 cache 的问题
+    //val cache_broadcast_value = if (broadcast_enabled && cache_id.nonEmpty) JdbcCacheManager.getCache(cacheConfMap) else null
+
+
     val cache_reserved = cacheConf.getOrElse("cache.reserved", "true").toBoolean
 
     val rdd2 = rdd.mapPartitions(iter =>{
       val ds = JdbcPool.getPool(cacheConfMap)
+      // 不能放在 rdd mapPartitions 之外，否者会遇到每个 task 序列和反序列 cache 的问题
+      //val cache_data = scala.collection.mutable.Map[String, Map[String, String]]()
+      val cache_data = JdbcCacheManager.getImmutableCache1(cacheConfMap)
 
       new Iterator[String] {
         private[this] var currentElement: String = _
@@ -97,14 +114,15 @@ class JdbcCacheRule extends StreamingRDDRule {
 
             // 外部关联优化: 1 如果 key 为空，不关联; 2 如果 不为空，根据插件类内部的优化规则选择
             if (keyValue.nonEmpty) {
-              //TODO: 先检查 cache_broadcast_value 中是否存在：
+              //先检查 cache_broadcast_value 中是否存在： 该方法有问题, 每个 task 反序列后，需要反复进行 broadcast操作，非常慢
               //   如果不存在，进行批量查询，之后进行处理；如果存在，不进行外部查询，直接根据 cache_broadcast_value 中的关联信息处理
-              if (broadcast_enabled && cache_broadcast_value.contains(keyValue)) {
-                //cache_broadcast_value 命中不需要外部查询
-                //TODO: 删除注释
-                //println("= = " * 10 + "[myapp JdbcCacheRule.process] cache optimization1: cache_broadcast_value cache hit with " + keyName + " = " + keyValue)
-                null
-              } else if (cache_reserved  && cache_data.contains(keyValue)){
+//              if (broadcast_enabled && cache_broadcast_value.contains(keyValue)) {
+//                //cache_broadcast_value 命中不需要外部查询
+//                //TODO: 删除注释
+//                //println("= = " * 10 + "[myapp JdbcCacheRule.process] cache optimization1: cache_broadcast_value cache hit with " + keyName + " = " + keyValue)
+//                null
+//              } else
+            if (cache_reserved  && cache_data.contains(keyValue)){
                 // cache_broadcast_value 不命中；如果保存了之前查询的 cache_data 结果，检查 cache_data
                 // cache_data 命中，不需要外部查询
                 //TODO: 删除注释
@@ -189,7 +207,8 @@ class JdbcCacheRule extends StreamingRDDRule {
                 recordRules.foreach(rule => {
                   //TODO: 删除注释
                   //println("= = " * 10 + "[myapp JdbcCacheRule.process] rule = " + rule.rule_name)
-                  jsonStr2 = rule.process(jsonStr2, key, cache_broadcast_value, cache_data, batchQueryResult)
+                  //jsonStr2 = rule.process(jsonStr2, key, cache_broadcast_value, cache_data, batchQueryResult)
+                  jsonStr2 = rule.process(jsonStr2, key, cache_data, batchQueryResult)
                 })
                 jsonStr2
             }

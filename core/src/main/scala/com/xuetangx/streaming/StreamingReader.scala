@@ -62,8 +62,8 @@ object StreamingReader extends Logging {
     }
 
     //是否对数据源进行 repartition
-    val stream2 = appConfMap.get("dataInterface.stream.repatition.partitions") match {
-      case Some(x) if x.nonEmpty =>
+    val stream2 = appConfMap.getOrElse("dataInterface.stream.repatition.partitions", "").trim match {
+      case x if x.nonEmpty =>
         stream.repartition(x.toInt)
       case _ =>
         stream
