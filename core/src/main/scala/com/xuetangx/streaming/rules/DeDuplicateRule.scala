@@ -10,14 +10,15 @@ import org.json4s.JsonDSL._
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
+import scala.collection.mutable.{Map => mutableMap, Set => mutableSet}
+import scala.collection.convert.wrapAsJava._
 
 /**
  * Created by tsingfu on 15/12/1.
  */
 class DeDuplicateRule extends StreamingRDDRule {
 
-  //TODO: 删除
-  val event_set_register = Set(
+  val event_group_register_set = Set(
     "common.student.account_created",
     "common.student.account_success",
     "oauth.user.register",
@@ -83,18 +84,29 @@ class DeDuplicateRule extends StreamingRDDRule {
     // 方式1：db.collection(yyyy-MM-dd).document(id): 每个排重的id 存储为 一个document ，排重方式：检查document是否存在，不存在添加document; 存在，则设置重复
     // 方式2：db.collection.document(yyyy-MM-dd) : 排重的id作为每个document 的字段，排重方式：检查字段是否存在，不存在更新添加字段; 存在，则设置重复
     // 方式3：db.collection.document(yyyy-MM-dd) : 排重的id存储在每个 document 的 ids 数组字段，排重方式：检查数组中是否存在，不存在更新添加数组元素; 存在，则设置重复
+    //TODO: 20151210： 支持2级排重，如 key1: user_id, key2: event_group
+    // 更新 mongo 排重数据结构：
+    // 方式1： db.collection(collectionNamePrefix + time_interval + key1_name + time_deduplicate).document(key1->key1_value, key2->key2_value)
+
+    //TODO: 内部批次2级排重数据结构：
+    // 方式1： deDuplicateMap mutable.Map[
+    //          key=mongo.collection_name(collectionNamePrefix + time_interval + key1_name + time_deduplicate),
+    //          value=mutable.Map[key1Value, mutable.Map[key2, mutable.Set[key2Value]]]
+    //       ]
+
+
+    val collectionNamePrefix = confMap.get("mongo.collection.name.prefix") match {
+      case Some(x) if x.nonEmpty => x
+      case _ => "deDuplicate_"
+    }
 
     val rdd2 =
     rdd.mapPartitions(iter => {
       // time -> key_set
       //Note: 此处可能会导致executor内存问题，每个分区任务用完，要清理
       //TODO: 需要处理的问题情景：在处理注册日志前，收到其他日志信息，简单的排重结构会导致数据排重有问题，导致后续统计数据不准
-      val deDuplicateMap = scala.collection.mutable.HashMap[String, scala.collection.mutable.Set[String]]()
-
-      val collectionNamePrefix = confMap.get("mongo.collection.name.prefix") match {
-        case Some(x) if x.nonEmpty => x
-        case _ => "deDuplicate_"
-      }
+      //val deDuplicateMap = scala.collection.mutable.Map[String, scala.collection.mutable.Set[String]]()
+      val deDuplicateMap2 = mutableMap[String, mutableMap[String, mutableMap[String, mutableSet[String]]]]()
 
       // 遍历 iter，过程中获取是否重复的标记，然后返回增加属性后的iter
       new Iterator[String] {
@@ -102,8 +114,17 @@ class DeDuplicateRule extends StreamingRDDRule {
         override def hasNext: Boolean = {
           val res = iter.hasNext
           if (! res) {
-            deDuplicateMap.values.foreach(_.clear())
-            deDuplicateMap.clear()
+            //deDuplicateMap.values.foreach(_.clear())
+            //deDuplicateMap.clear()
+
+            deDuplicateMap2.values.foreach(key1_to_key2Set_map => {
+              key1_to_key2Set_map.foreach(key2_to_set_map =>{
+                key2_to_set_map._2.values.foreach(_.clear())
+                key2_to_set_map._2.clear()
+              })
+              key1_to_key2Set_map.clear()
+            })
+            deDuplicateMap2.clear()
           }
           res
         }
@@ -114,84 +135,125 @@ class DeDuplicateRule extends StreamingRDDRule {
           //println("= = " * 10 + "[myapp debug] jsonStr = " + jsonStr)
           val jValue = parse(jsonStr)
 
-          val duplicate_field_map_tmp = scala.collection.mutable.Map[String, Int]()
-
           val event_type = Utils.strip(compact(jValue \ "event_type"), "\"")
+          //val event_group = Utils.strip(compact(jValue \ "event_group"), "\"")
+
+          val duplicate_field_map_tmp = scala.collection.mutable.Map[String, String]()
 
           for (keys_intervals_tuple <- log_deduplicate_keys_time_intervals_list){
             val log_deduplicate_keys = keys_intervals_tuple._1.split(":").filter(_.trim.nonEmpty).map(_.trim)
+            val log_deduplicate_values = log_deduplicate_keys.map(key => {Utils.strip(compact(jValue \ key), "\"")})
 
             val time_intervals =  keys_intervals_tuple._2.split(":").filter(_.trim.nonEmpty).map(_.trim)
 
-            val deDuplicateValue = log_deduplicate_keys.map(key => {Utils.strip(compact(jValue \ key), "\"")}).mkString("#")
+            //val deDuplicateValue = log_deduplicate_keys.map(key => {Utils.strip(compact(jValue \ key), "\"")}).mkString("#")
 
             // 在mongo 缓冲中存储id时指定的属性名，默认取 log.deduplicate.key 指定的取值
-            val mongoCollectionKeyField = confMap.get("mongo.deduplicate.keyField") match {
-              case Some(x) if x.nonEmpty => x
-              case _ => log_deduplicate_keys.mkString("#")
-            } //示例：id
+            // 支持2级key排重，注释
+//            val mongoCollectionKeyField = confMap.get("mongo.deduplicate.keyField") match {
+//              case Some(x) if x.nonEmpty => x
+//              case _ => log_deduplicate_keys.mkString("#")
+//            } //示例：id
 
             //TODO: 发现加了2个排重属性后，性能下降很多，需要改进
-            val log_deduplicate_key_2 = if (log_deduplicate_keys.length > 1) log_deduplicate_keys(1) else ""
+            val log_deduplicate_key1 = log_deduplicate_keys(0)
+            val log_deduplicate_value1 = log_deduplicate_values(0)
+            val log_deduplicate_map = log_deduplicate_keys.zip(log_deduplicate_values).toMap
+            val log_deduplicate_key2 = if (log_deduplicate_keys.length > 1) log_deduplicate_keys(1) else ""
+            val log_deduplicate_value2 = if (log_deduplicate_keys.length > 1) log_deduplicate_values(1) else ""
 
             time_intervals.map(intervalKey => {
-              val collectionPrex = collectionNamePrefix + intervalKey + "_" + log_deduplicate_keys.mkString("_")
+              //val collectionPrex = collectionNamePrefix + intervalKey + "_" + log_deduplicate_keys.mkString("_")
+              val collectionPrex2 = collectionNamePrefix + intervalKey + "_" + log_deduplicate_key1
               //示例： deplicate_daily_user_id_20151113, deplicate_minutely_user_id_201511131658, deplicate_hourly_user_id_2015111316
-              val collectionName = getCollectionName(jValue, deduplicate_time_Key, collectionPrex, intervalKey)
+              //val collectionName = getCollectionName(jValue, deduplicate_time_Key, collectionPrex, intervalKey)
+              val collectionName = getCollectionName(jValue, deduplicate_time_Key, collectionPrex2, intervalKey)
               //TODO: 删除注释
               //println("= = " * 10 + "[myapp debug] collectionName1 = " + collectionName)
 
               //TODO: 需要性能调优，来增强代码灵活通用性
               // event_type 不是 注册类型的日志，不需要通过外部缓存进行排重，设置属性为-1
-              if (log_deduplicate_key_2 == "event_type" && !event_set_register.contains(event_type)) {
-                val duplicateFieldName = log_deduplicate_keys.mkString("_") + "_" + intervalKey + "_duplicate_flag"
-                duplicate_field_map_tmp.put(duplicateFieldName, -1)
-              } else {
-                val deDuplicateSet = deDuplicateMap.getOrElseUpdate(collectionName, scala.collection.mutable.Set[String]())
+//              if (log_deduplicate_key_2 == "event_type" && !event_set_register.contains(event_type)) {
+//                val duplicateFieldName = log_deduplicate_keys.mkString("_") + "_" + intervalKey + "_duplicate_flag"
+//                duplicate_field_map_tmp.put(duplicateFieldName, -1)
+//              } else {
+              //val deDuplicateSet = deDuplicateMap.getOrElseUpdate(collectionName, mutableSet[String]())
+              val deDuplicateSet2 = deDuplicateMap2.getOrElseUpdate(collectionName,
+                mutableMap[String, mutableMap[String, mutableSet[String]]]()
+              )
 
-                val add_into_deDuplicateSet_flag = deDuplicateSet.add(deDuplicateValue)
+              //val add_into_deDuplicateSet_flag = deDuplicateSet.add(deDuplicateValue)
+              val add_into_deDuplicateSet_flag =
+                if (log_deduplicate_keys.length == 2) {
+                  val key2_set =
+                    if (deDuplicateSet2.contains(log_deduplicate_value1)) {
+                      val key2_to_set_map = deDuplicateSet2(log_deduplicate_value1)
 
+                      if (key2_to_set_map.contains(log_deduplicate_key2)) {
+                        key2_to_set_map(log_deduplicate_key2)
+                      } else {
+                        key2_to_set_map.getOrElseUpdate(log_deduplicate_key2, mutableSet[String]())
+                      }
+                    } else {
+                      val key2_to_set_map = deDuplicateSet2.getOrElseUpdate(log_deduplicate_value1, mutableMap[String, mutableSet[String]]())
+                      key2_to_set_map.getOrElseUpdate(log_deduplicate_key2, mutableSet[String]())
+                    }
+                  key2_set.add(log_deduplicate_value2)
+                } else {
+                  // log_deduplicate_keys.length == 1
+                  val key2_to_set_map = deDuplicateSet2.getOrElseUpdate(log_deduplicate_value1,
+                    mutableMap[String, mutableSet[String]]()
+                  )
+                  if (key2_to_set_map.isEmpty){
+                    true
+                  } else {
+                    false
+                  }
+                }
                 // 处理存在多个 deDuplicateValue 为空的情况： 如果id 为空，无法判断是否重复；默认认为不重复
                 val id_duplicate_flag =
-                  if (deDuplicateValue.isEmpty) 0 // 如果id 为空，不重复
+                  //if (deDuplicateValue.isEmpty) "0" // 如果id 为空，默认认为不重复
+                  if (log_deduplicate_value1.isEmpty) "0" // 如果id 为空，默认认为不重复
                   else if (add_into_deDuplicateSet_flag) {
                     // 添加到 deDuplicateSet，批次中不重复
                     //TODO: 删除注释
                     //println("= = " * 10 + "[myapp debug1] add_into_deDuplicateSet " + collectionName + ", add_into_deDuplicateSet_flag = " + add_into_deDuplicateSet_flag + ", not duplicate in batch, deDuplicateValue = " + deDuplicateValue + ", deDuplicateSet = " + deDuplicateSet.mkString("[", ",", "]"))
                     // 缓存数据结构方式1：
                     val coll = MongoConnectionManager.getCollection(cacheConfMap, collectionName)
-                    val res = coll.find(new BasicDBObject(mongoCollectionKeyField, deDuplicateValue)).first()
+                    //val res = coll.find(new BasicDBObject(mongoCollectionKeyField, deDuplicateValue)).first()
+                    val res = coll.find(new BasicDBObject(log_deduplicate_map)).first()
                     // res 为 null 表示不存在mongo缓存中， 0代表不重复，更新外部缓存，1代表重复
                     if (res == null) {
                       //TODO: 删除注释
                       //println("= = " * 10 + "[myapp debug2] mongo.find.res = " + res + ", not duplicate in mongo")
-                      coll.insertOne(new Document(mongoCollectionKeyField, deDuplicateValue))
-                      0
+                      //coll.insertOne(new Document(mongoCollectionKeyField, deDuplicateValue))
+                      coll.insertOne(new Document(log_deduplicate_map))
+                      "0"
                     } else {
                       //TODO: 删除注释
                       //println("= = " * 10 + "[myapp debug3] mongo.find.res = " + res + ", duplicate in mongo")
-                      1
+                      "1"
                     }
                   } else {
                     //不能添加到 deDuplicateSet，批次中重复
                     //TODO: 删除注释
                     //println("= = " * 10 + "[myapp debug] add_into_deDuplicateSet true or false = " + add_into_deDuplicateSet_flag + ", duplicate in batch")
-                    1
+                    "1"
                   }
 
                 //添加排重属性
                 //println(Thread.currentThread().getName + "= = " * 10 + "[myapp debug] DeDuplicateRule.process add document in collection " + collectionName + ", document = " + logDeDuplicateKey + " _duplicate_flag = " + id_duplicate_flag + " -> " + deDuplicateValue)
                 val duplicateFieldName = log_deduplicate_keys.mkString("_") + "_" + intervalKey + "_duplicate_flag"
                 duplicate_field_map_tmp.put(duplicateFieldName, id_duplicate_flag)
-              }
+//              }
             })
 
             //TODO: 删除注释
-            val platform = Utils.strip(compact(jValue \ "platform"), "\"")
-            val time = Utils.strip(compact(jValue \ "time"), "\"")
-            if (platform != "web"){
-              println(Thread.currentThread().getName + "= = " * 4 + "[myapp] DeDuplicateRule.process " + platform + ", duplicate_field_map = " + duplicate_field_map_tmp.mkString("[", ",", "]") + ", " + log_deduplicate_keys.mkString("_") + "=" + deDuplicateValue +", time in log = " + time + ", event_type = " + event_type)
-            }
+//            val platform = Utils.strip(compact(jValue \ "platform"), "\"")
+//            val time = Utils.strip(compact(jValue \ "time"), "\"")
+//            if (platform != "web"){
+//              println(Thread.currentThread().getName + "= = " * 4 + "[myapp] DeDuplicateRule.process " + platform + ", duplicate_field_map = " + duplicate_field_map_tmp.mkString("[", ",", "]") + ", " + log_deduplicate_map.mkString("[", ", ","]") + ", time in log = " + time + ", event_type = " + event_type)
+//            }
           }
 
           val duplicate_field_map = duplicate_field_map_tmp.toMap
@@ -199,10 +261,10 @@ class DeDuplicateRule extends StreamingRDDRule {
           val res = compact(jValue_new)
 
           //TODO: 删除注释
-          val platform = Utils.strip(compact(jValue \ "platform"), "\"")
-          if (platform != "web" && event_set_register.contains(event_type)){
-            println(Thread.currentThread().getName + "= = " * 5 + "[myapp] DeDuplicateRule.process res = " + res)
-          }
+//          val platform = Utils.strip(compact(jValue \ "platform"), "\"")
+//          if (platform != "web" && event_group_register_set.contains(event_type)){
+//            println(Thread.currentThread().getName + "= = " * 5 + "[myapp] DeDuplicateRule.process res = " + res)
+//          }
           res
         }
       }
@@ -345,10 +407,10 @@ class DeDuplicateRule extends StreamingRDDRule {
             val jValue_new = jValue.merge(render(duplicate_field_map))
             val res = compact(jValue_new)
             //TODO: 删除注释
-            if (platform != "web" && event_set_register.contains(event_type)){
-              //in ('common.student.account_created','common.student.account_success','oauth.user.register','oauth.user.register_success','weixinapp.user.register_success','api.user.oauth.register_success','api.user.register','api.user.register_success')
-              println(Thread.currentThread().getName + "= = " * 5 + "[myapp] DeDuplicateRule.process res = " + res)
-            }
+//            if (platform != "web" && event_group_register_set.contains(event_type)){
+//              //in ('common.student.account_created','common.student.account_success','oauth.user.register','oauth.user.register_success','weixinapp.user.register_success','api.user.oauth.register_success','api.user.register','api.user.register_success')
+//              println(Thread.currentThread().getName + "= = " * 5 + "[myapp] DeDuplicateRule.process res = " + res)
+//            }
             res
           }
         }

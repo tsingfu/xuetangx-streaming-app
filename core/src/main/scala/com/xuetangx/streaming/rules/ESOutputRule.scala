@@ -94,9 +94,10 @@ class ESOutputRule extends StreamingRDDRule {
           val jValue_new1= jValue.merge(render(addFieldsMap))
 
           val jvalue_map = jValue_new1.extract[Map[String, String]]
-          if (jvalue_map.contains(RAW_DATA_KEY)) {
-            println("= = " * 10 + "[myapp ESOutputRule.output.question] source = " + jvalue_map(RAW_DATA_KEY))
-          }
+          //TODO: 删除测试
+//          if (jvalue_map.contains(RAW_DATA_KEY)) {
+//            println("= = " * 10 + "[myapp ESOutputRule.output.question] source = " + jvalue_map(RAW_DATA_KEY))
+//          }
           val json_map: java.util.Map[String, Object] = new util.HashMap[String, Object]()
           jvalue_map.foreach{case (k, v)=> json_map.put(k, v)}
 
@@ -185,6 +186,7 @@ class ESOutputRule extends StreamingRDDRule {
             client.update(updateRequest).get()
           }
 
+          //TODO: 删除测试
           // println("= = " * 10 + "[myapp ESOutputRule.output] source = " + raw_data)
           jsonStr
         }

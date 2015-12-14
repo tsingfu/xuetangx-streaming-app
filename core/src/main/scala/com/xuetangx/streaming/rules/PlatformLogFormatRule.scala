@@ -11,6 +11,23 @@ import org.json4s.JsonDSL._
  */
 class PlatformLogFormatRule extends StreamingRDDRule {
 
+  // 为统计排重，对event_type归类
+  val event_group_register_set = Set(
+    "common.student.account_created",
+    "common.student.account_success",
+    "oauth.user.register",
+    "oauth.user.register_success",
+    "weixinapp.user.register_success",
+    "api.user.oauth.register_success",
+    "api.user.register",
+    "api.user.register_success")
+
+  val event_group_enrollment_set = Set("edx.course.enrollment.activated")
+
+  // event_type like '/courses/%/courseware/%'
+  val event_group_access_course_pattern = "/courses/.*/courseware/.*".r
+
+
   /**处理过滤和属性增强(取值更新，增减字段等)
     *
     * @param rdd
@@ -79,6 +96,17 @@ class PlatformLogFormatRule extends StreamingRDDRule {
         val uuid = Utils.strip(compact(jValue \ "uuid"), "\"")  //Note: web平台 uuid 为空，取 uid 标识
 
         val event_type = Utils.strip(compact(jValue \ "event_type"), "\"")
+        // 为统计排重，对event_type归类
+        val access_courseware_flag = event_group_access_course_pattern.findFirstIn(event_type) match {
+          case Some(x) => true
+          case _ => false
+        }
+        val event_group =
+          if (event_group_register_set.contains(event_type)) "register"
+          else if (event_group_enrollment_set.contains(event_type)) "enrollment"
+          else if (access_courseware_flag) "access_courseware"
+          else "unknown"
+
         val agent = Utils.strip(compact(jValue \ "agent"), "\"")
         val platform = get_platform(agent)
         val origin_referer = Utils.strip(compact(jValue \ "origin_referer"), "\"") match {
@@ -93,7 +121,6 @@ class PlatformLogFormatRule extends StreamingRDDRule {
         }
         val host = Utils.strip(compact(jValue \ "host"), "\"")
 
-        //          val course_id = Utils.strip(compact(jValue \ "event" \ "course_id"), "\"")
         val event_course_id = Utils.strip(compact(jValue \ "event" \ "course_id"), "\"")
         val context_course_id = Utils.strip(compact(jValue \ "context" \ "course_id"), "\"")
 
@@ -101,31 +128,19 @@ class PlatformLogFormatRule extends StreamingRDDRule {
           if (event_course_id.nonEmpty) event_course_id else {
             if (context_course_id.nonEmpty) context_course_id else ""
           }
-        /*
-                  val jsonStr2 = "{\"" +
-                          "username" + "\":\"" + username + "\", \"" +
-                          "user_id" + "\":" + user_id + ", \"" +
-                          "time" + "\":\"" + time + "\",\"" +
-                          "uuid" + "\":\"" + uuid + "\",\"" +
-                          "event_type" + "\":\"" + event_type + "\",\"" +
-                          "agent" + "\":\"" + agent + "\",\"" +
-                          "origin_referer" + "\":\"" + origin_referer + "\",\"" +
-                          "spam" + "\":\"" + spam +
-                          "host" + "\":\"" + host +
-                          "\"}"
-        */
+
         val log_jValue = render(Map("user_id" -> user_id)).merge(
           render(Map[String, String](
             "username" -> username,
             "uuid" -> uuid,
-            // "uuid" -> anonymous_uuid,
             "event_type" -> event_type,
             "platform" -> platform,
             "origin_referer" -> origin_referer,
             "spam" -> spam,
             "host" -> host,
             "time" -> time,
-            "course_id" -> course_id)
+            "course_id" -> course_id,
+            "event_group" -> event_group)
           )
         )
 

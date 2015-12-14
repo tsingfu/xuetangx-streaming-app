@@ -861,7 +861,7 @@ class StreamingAppNew extends Serializable with Logging {
             }
 
             println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares] df.schema = ")
-            df.printSchema()
+            //df.printSchema()
 
             if (df.schema.fieldNames.nonEmpty) {
               val selectExprClause = confMap.getOrElse("selectExprClause", null)
@@ -881,7 +881,7 @@ class StreamingAppNew extends Serializable with Logging {
 
               println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.prepares data after stepPhase = " + rule_step +"], df2.rdd.length = " + df2.rdd.partitions.length + ", df2 = ")
               // TODO: 测试 schmea
-              df2.printSchema()
+              //df2.printSchema()
 
               (df2, df2.schema, rdd_cache_map, df_cache_map)
             } else { // 空的 DataFrame
@@ -919,7 +919,7 @@ class StreamingAppNew extends Serializable with Logging {
               case x: DataFrame => x
             }
             println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data before stepPhase = " + rule_step +", df.rdd.length = " + df.rdd.partitions.length + ", df = ")
-            df.printSchema()
+            //df.printSchema()
 
             val result =
               if (df.schema.fieldNames.isEmpty) {
@@ -943,8 +943,8 @@ class StreamingAppNew extends Serializable with Logging {
                     df.filter(whereClause)
                   } else df
 
-                println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute data after select and where, stepPhase = " + rule_step + "], df2.schema.fieldNames.length = " + df2.schema.fieldNames.length + ", df2 = ")
-                df2.printSchema()
+                println("= = " * 8 + DateFormatUtils.dateMs2Str(System.currentTimeMillis()) + " [myapp StreamingApp.processStep.compute] data after select and where, stepPhase = " + rule_step + "], df2.schema.fieldNames.length = " + df2.schema.fieldNames.length + ", df2 = ")
+                //df2.printSchema()
 
                 // TODO: 此处是由 df.schema.fieldNames.nonEmpty 的 df 过滤生成， 新的 schema.fieldNames.nonEmpty 一定为 true
                 // TODO: 优化点，如果能判断没有数据，可以不用处理后面的数据

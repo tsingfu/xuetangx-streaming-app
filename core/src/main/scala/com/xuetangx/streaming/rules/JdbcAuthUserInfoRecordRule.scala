@@ -59,7 +59,8 @@ class JdbcAuthUserInfoRecordRule extends StreamingRecordRule {
     // 新增属性，是否当天注册，当天注册 1，非当天
     val jValue_new = jValue.merge(render(addField))
     val res = compact(jValue_new)
-    // println("= = " * 10 + "[myapp JdbcAuthUserInfoRecordRule.process] res = " + res)
+    //TODO: 删除测试
+    //println("= = " * 10 + "[myapp JdbcAuthUserInfoRecordRule.process] res = " + res)
     res
   }
 

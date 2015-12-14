@@ -39,6 +39,10 @@ class JdbcCacheRule extends StreamingRDDRule {
 
     //Note: 考虑到外部缓存 mysql 的查询性能，采用批量查询的方式优化，简化功能，暂支持一个key，同时最好key上有索引
     val keyName = cacheConfMap("keyName")
+    val log_key_name = cacheConfMap.getOrElse("log.key.name", "").trim match {
+      case x if x.nonEmpty => x
+      case _ => keyName
+    }
     val selectKeyNames = cacheConfMap.get("cache.keyName.list") match {
       case Some(x) if x.nonEmpty => x
       case _ => "*"
@@ -109,7 +113,8 @@ class JdbcCacheRule extends StreamingRDDRule {
             //  查询时指定范围 id
             val jValue = parse(currentElement)
 
-            val keyValue = Utils.strip(compact(jValue \ keyName), "\"")
+            //val keyValue = Utils.strip(compact(jValue \ keyName), "\"")
+            val keyValue = Utils.strip(compact(jValue \ log_key_name), "\"")
             batchKeyArrayBuffer.append(keyValue)
 
             // 外部关联优化: 1 如果 key 为空，不关联; 2 如果 不为空，根据插件类内部的优化规则选择
@@ -119,7 +124,7 @@ class JdbcCacheRule extends StreamingRDDRule {
 //              if (broadcast_enabled && cache_broadcast_value.contains(keyValue)) {
 //                //cache_broadcast_value 命中不需要外部查询
 //                //TODO: 删除注释
-//                //println("= = " * 10 + "[myapp JdbcCacheRule.process] cache optimization1: cache_broadcast_value cache hit with " + keyName + " = " + keyValue)
+//                println("= = " * 10 + "[myapp JdbcCacheRule.process] cache optimization1: cache_broadcast_value cache hit with " + keyName + " = " + keyValue)
 //                null
 //              } else
             if (cache_reserved  && cache_data.contains(keyValue)){
@@ -201,9 +206,6 @@ class JdbcCacheRule extends StreamingRDDRule {
             batchResultArrayBuffer = batchArrayBuffer.zip(batchKeyArrayBuffer).map{
               case (jsonStr1, key)=>
                 var jsonStr2 = jsonStr1
-  //              batchProcessorInstances.foreach(plugin=>{
-  //                jsonStr2 = plugin.process(jsonStr2, key, batchQueryResult)
-  //              })
                 recordRules.foreach(rule => {
                   //TODO: 删除注释
                   //println("= = " * 10 + "[myapp JdbcCacheRule.process] rule = " + rule.rule_name)
